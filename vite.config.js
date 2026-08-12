@@ -5,5 +5,5 @@ import react from "@vitejs/plugin-react";
 // 如果你是用「使用者名稱.github.io」這種根網域的 repo，base 保持 '/' 就好
 export default defineConfig({
   plugins: [react()],
-  base: "/salon-app/",
+  base: "/LUZ-/",
 });
