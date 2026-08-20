@@ -8,6 +8,7 @@ import {
   CalendarCheck, BarChart3, Check, ChevronLeft, ChevronRight, Receipt, Package,
 } from "lucide-react";
 import { loadKey, saveKey } from "./storage";
+import PayrollLock from "./payroll-lock";
 
 const FONT_IMPORT = `@import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap');`;
 
@@ -1155,12 +1156,14 @@ export default function FinanceApp() {
         {tab === "ledger" && <LedgerView transactions={transactions} staff={staff} materials={materials} onAdd={addTxGroup} onDelete={deleteTxGroup} />}
         {tab === "materials" && <MaterialsView materials={materials} onAdd={addMaterial} onUpdate={updateMaterial} onDelete={deleteMaterial} />}
         {tab === "staff" && (
-          <StaffView
-            staff={staff} transactions={transactions} assistantItems={assistantItems} designerDeductions={designerDeductions} templates={templates}
-            onAdd={addStaff} onUpdate={updateStaff} onDelete={deleteStaff} onSettle={settleStaff}
-            onChangeAssistantItems={changeAssistantItems} onChangeDesignerDeductions={changeDesignerDeductions}
-            onAddTemplate={addTemplate} onRemoveTemplate={removeTemplate}
-          />
+          <PayrollLock title="員工薪資">
+            <StaffView
+              staff={staff} transactions={transactions} assistantItems={assistantItems} designerDeductions={designerDeductions} templates={templates}
+              onAdd={addStaff} onUpdate={updateStaff} onDelete={deleteStaff} onSettle={settleStaff}
+              onChangeAssistantItems={changeAssistantItems} onChangeDesignerDeductions={changeDesignerDeductions}
+              onAddTemplate={addTemplate} onRemoveTemplate={removeTemplate}
+            />
+          </PayrollLock>
         )}
         {tab === "closing" && <DailyClosingView transactions={transactions} closings={closings} onSave={saveClosing} />}
         {tab === "reports" && <ReportsView transactions={transactions} />}
