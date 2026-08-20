@@ -9,6 +9,7 @@ import {
 } from "lucide-react";
 import { loadKey, saveKey } from "./storage";
 import PayrollLock from "./payroll-lock";
+import { STORES, storeName } from "./stores";
 
 const FONT_IMPORT = `@import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap');`;
 
@@ -18,6 +19,7 @@ const PAPER_LINE = "#E3D8BE";
 const PAPER_RAISED = "#FCFAF3";
 const BRASS = "#A9812F";
 const BRASS_DARK = "#7C5E20";
+const BRASS_LIGHT = "#F4E7C8";
 const WINE = "#7B3B34";
 const WINE_LIGHT = "#F2E1DE";
 const SAGE = "#4F6B4F";
@@ -35,6 +37,16 @@ const ASSISTANT_ITEMS_KEY = "finance:assistantItems";
 const DESIGNER_DEDUCTIONS_KEY = "finance:designerDeductions";
 const ITEM_TEMPLATES_KEY = "finance:staffItemTemplates";
 const MATERIALS_KEY = "finance:materials";
+
+const ALL_STORES = "__all__";
+const NO_STORE = "__none__";
+
+/** 依分店篩選交易。未指定分店的舊資料歸在「未指定」。 */
+function filterByStore(txs, storeId) {
+  if (!storeId || storeId === ALL_STORES) return txs;
+  if (storeId === NO_STORE) return txs.filter((t) => !t.storeId);
+  return txs.filter((t) => t.storeId === storeId);
+}
 const DEFAULT_ASSISTANT_TEMPLATES = ["全勤獎金", "業績獎金", "交通津貼", "伙食津貼", "遲到扣款", "請假扣款"];
 const DEFAULT_MATERIAL_RATE = 10;
 
@@ -49,7 +61,8 @@ function groupTx(list) {
     if (!map.has(gid)) {
       map.set(gid, {
         groupId: gid, date: t.date, type: t.type, note: t.note,
-        paymentMethod: t.paymentMethod, staffId: t.staffId, items: [], amount: 0,
+        paymentMethod: t.paymentMethod, staffId: t.staffId, storeId: t.storeId || "",
+        items: [], amount: 0,
       });
       order.push(gid);
     }
@@ -176,9 +189,10 @@ function CategoryLineEditor({ rows, categories, type, materials, onChange }) {
   );
 }
 
-function TxForm({ onAdd, staff, materials }) {
+function TxForm({ onAdd, staff, materials, defaultStoreId }) {
   const [type, setType] = useState("income");
   const [date, setDate] = useState(todayStr());
+  const [storeId, setStoreId] = useState(defaultStoreId || STORES[0].id);
   const [rows, setRows] = useState([{ id: uid(), category: INCOME_CATEGORIES[0], amount: "", materialId: "", qty: 1 }]);
   const [note, setNote] = useState("");
   const [payment, setPayment] = useState("現金");
@@ -192,6 +206,10 @@ function TxForm({ onAdd, staff, materials }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [type]);
 
+  useEffect(() => {
+    if (defaultStoreId) setStoreId(defaultStoreId);
+  }, [defaultStoreId]);
+
   function submit(e) {
     e.preventDefault();
     const validRows = rows
@@ -202,7 +220,7 @@ function TxForm({ onAdd, staff, materials }) {
       return;
     }
     onAdd(validRows, {
-      type, date, note: note.trim(), paymentMethod: payment,
+      type, date, note: note.trim(), paymentMethod: payment, storeId,
       staffId: type === "income" ? (staffId || null) : null,
     });
     setRows([{ id: uid(), category: categories[0], amount: "", materialId: "", qty: 1 }]);
@@ -223,6 +241,13 @@ function TxForm({ onAdd, staff, materials }) {
           <TrendingDown size={14} /> 支出
         </button>
       </div>
+
+      <label className="field-label">
+        分店
+        <select value={storeId} onChange={(e) => setStoreId(e.target.value)} className="ledger-input">
+          {STORES.map((st) => <option key={st.id} value={st.id}>{st.name}</option>)}
+        </select>
+      </label>
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
         <label className="field-label">
@@ -274,7 +299,18 @@ function GroupRow({ g, staff, onDelete }) {
     <div className="ledger-row">
       <div style={{ width: 78, color: MUTED, fontFamily: "'IBM Plex Mono', monospace", fontSize: 12 }}>{g.date.slice(5)}</div>
       <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ fontSize: 14, fontWeight: 500, color: INK }}>{label}{s ? " · " + s.name : ""}</div>
+        <div style={{ fontSize: 14, fontWeight: 500, color: INK, display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+          <span>{label}{s ? " · " + s.name : ""}</span>
+          {g.storeId ? (
+            <span style={{ fontSize: 10, padding: "1px 7px", borderRadius: 999, background: BRASS_LIGHT, color: BRASS, fontWeight: 600 }}>
+              {storeName(g.storeId)}
+            </span>
+          ) : (
+            <span style={{ fontSize: 10, padding: "1px 7px", borderRadius: 999, background: "#EFEDE7", color: MUTED }}>
+              未指定分店
+            </span>
+          )}
+        </div>
         {g.items.length > 1 && (
           <div style={{ fontSize: 11, color: MUTED, marginTop: 2 }}>
             {g.items.map((i) => i.category + " " + fmtMoney(i.amount)).join("　")}
@@ -294,7 +330,7 @@ function GroupRow({ g, staff, onDelete }) {
   );
 }
 
-function LedgerView({ transactions, staff, materials, onAdd, onDelete }) {
+function LedgerView({ transactions, staff, materials, defaultStoreId, onAdd, onDelete }) {
   const [filterType, setFilterType] = useState("all");
   const [filterMonth, setFilterMonth] = useState(monthKey(todayStr()));
 
@@ -315,7 +351,7 @@ function LedgerView({ transactions, staff, materials, onAdd, onDelete }) {
 
   return (
     <div style={{ display: "grid", gridTemplateColumns: "340px 1fr", gap: 20 }} className="responsive-grid">
-      <TxForm onAdd={onAdd} staff={staff} materials={materials} />
+      <TxForm onAdd={onAdd} staff={staff} materials={materials} defaultStoreId={defaultStoreId} />
 
       <div style={{ display: "flex", flexDirection: "column", gap: 12, minWidth: 0 }}>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
@@ -342,7 +378,7 @@ function LedgerView({ transactions, staff, materials, onAdd, onDelete }) {
   );
 }
 
-function Dashboard({ transactions, staff }) {
+function Dashboard({ transactions, allTransactions, staff, storeFilter }) {
   const mk = monthKey(todayStr());
   const monthTx = transactions.filter((t) => monthKey(t.date) === mk);
   const income = monthTx.filter((t) => t.type === "income").reduce((s, t) => s + t.amount, 0);
@@ -360,6 +396,25 @@ function Dashboard({ transactions, staff }) {
       };
     });
   }, [transactions, mk]);
+
+  // 選「全部分店」時，把本月各店的數字拆開來看
+  const perStore = useMemo(() => {
+    if (storeFilter !== ALL_STORES) return null;
+    const src = allTransactions || transactions;
+    const rows = STORES.map((st) => {
+      const tx = src.filter((t) => t.storeId === st.id && monthKey(t.date) === mk);
+      const inc = tx.filter((t) => t.type === "income").reduce((s2, t) => s2 + t.amount, 0);
+      const exp = tx.filter((t) => t.type === "expense").reduce((s2, t) => s2 + t.amount, 0);
+      return { id: st.id, name: st.name, income: inc, expense: exp, net: inc - exp };
+    });
+    const un = src.filter((t) => !t.storeId && monthKey(t.date) === mk);
+    if (un.length > 0) {
+      const inc = un.filter((t) => t.type === "income").reduce((s2, t) => s2 + t.amount, 0);
+      const exp = un.filter((t) => t.type === "expense").reduce((s2, t) => s2 + t.amount, 0);
+      rows.push({ id: NO_STORE, name: "未指定分店", income: inc, expense: exp, net: inc - exp, muted: true });
+    }
+    return rows;
+  }, [allTransactions, transactions, storeFilter, mk]);
 
   const recent = groupTx([...transactions].sort((a, b) => (a.date < b.date ? 1 : -1))).slice(0, 6);
 
@@ -393,6 +448,44 @@ function Dashboard({ transactions, staff }) {
         <StatCard label="本月交易筆數" value={monthTx.length} icon={<Receipt size={15} />} />
         <StatCard label="在職員工" value={staff.length} icon={<Users size={15} />} />
       </div>
+
+      {perStore && (
+        <div style={{ background: PAPER_RAISED, border: "1px solid " + PAPER_LINE, borderRadius: 10, padding: 18 }}>
+          <div style={{ fontFamily: "'Fraunces', serif", fontSize: 16, fontWeight: 600, marginBottom: 4, color: INK }}>
+            {monthLabel(mk)} 各分店
+          </div>
+          <div style={{ fontSize: 12, color: MUTED, marginBottom: 14 }}>
+            上方選單切到單一分店，所有頁面就只會顯示那家店的數字。
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))", gap: 12 }}>
+            {perStore.map((r) => (
+              <div key={r.id} style={{
+                border: "1px solid " + PAPER_LINE, borderRadius: 9, padding: "13px 15px",
+                background: "#FFFDF8", opacity: r.muted ? 0.7 : 1,
+              }}>
+                <div style={{ fontSize: 13, fontWeight: 600, color: r.muted ? MUTED : INK, marginBottom: 8 }}>{r.name}</div>
+                <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: MUTED, padding: "2px 0" }}>
+                  <span>收入</span>
+                  <span style={{ fontFamily: "'IBM Plex Mono', monospace", color: SAGE }}>{fmtMoney(r.income)}</span>
+                </div>
+                <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: MUTED, padding: "2px 0" }}>
+                  <span>支出</span>
+                  <span style={{ fontFamily: "'IBM Plex Mono', monospace", color: WINE }}>{fmtMoney(r.expense)}</span>
+                </div>
+                <div style={{
+                  display: "flex", justifyContent: "space-between", fontSize: 13, fontWeight: 600,
+                  paddingTop: 7, marginTop: 5, borderTop: "1px dashed " + PAPER_LINE, color: INK,
+                }}>
+                  <span>淨額</span>
+                  <span style={{ fontFamily: "'IBM Plex Mono', monospace", color: r.net >= 0 ? SAGE : WINE }}>
+                    {fmtMoney(r.net)}
+                  </span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       <div style={{ background: PAPER_RAISED, border: "1px solid " + PAPER_LINE, borderRadius: 10, padding: 18 }}>
         <div style={{ fontFamily: "'Fraunces', serif", fontSize: 16, fontWeight: 600, marginBottom: 12, color: INK }}>近六個月收支趨勢</div>
@@ -696,13 +789,16 @@ function StaffView({
   );
 }
 
-function DailyClosingView({ transactions, closings, onSave }) {
+function DailyClosingView({ transactions, closings, storeFilter, onSave }) {
   const [date, setDate] = useState(todayStr());
+  const [storeId, setStoreId] = useState(
+    storeFilter && storeFilter !== ALL_STORES && storeFilter !== NO_STORE ? storeFilter : STORES[0].id
+  );
   const [opening, setOpening] = useState("");
   const [counted, setCounted] = useState("");
   const [note, setNote] = useState("");
 
-  const dayTx = transactions.filter((t) => t.date === date);
+  const dayTx = transactions.filter((t) => t.date === date && (t.storeId || "") === storeId);
   const cashIn = dayTx.filter((t) => t.type === "income" && t.paymentMethod === "現金").reduce((s, t) => s + t.amount, 0);
   const cashOut = dayTx.filter((t) => t.type === "expense" && t.paymentMethod === "現金").reduce((s, t) => s + t.amount, 0);
   const totalIncome = dayTx.filter((t) => t.type === "income").reduce((s, t) => s + t.amount, 0);
@@ -712,7 +808,7 @@ function DailyClosingView({ transactions, closings, onSave }) {
   const countedNum = parseFloat(counted) || 0;
   const diff = counted === "" ? null : countedNum - expectedCash;
 
-  const existing = closings.find((c) => c.date === date);
+  const existing = closings.find((c) => c.date === date && (c.storeId || STORES[0].id) === storeId);
 
   useEffect(() => {
     if (existing) {
@@ -722,11 +818,16 @@ function DailyClosingView({ transactions, closings, onSave }) {
     } else {
       setOpening(""); setCounted(""); setNote("");
     }
-  }, [date]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [date, storeId]);
+
+  useEffect(() => {
+    if (storeFilter && storeFilter !== ALL_STORES && storeFilter !== NO_STORE) setStoreId(storeFilter);
+  }, [storeFilter]);
 
   function save() {
     onSave({
-      id: existing ? existing.id : uid(), date,
+      id: existing ? existing.id : uid(), date, storeId,
       openingCash: openingNum, closingCashCounted: countedNum,
       expectedCash, note: note.trim(),
     });
@@ -738,6 +839,11 @@ function DailyClosingView({ transactions, closings, onSave }) {
     <div style={{ display: "grid", gridTemplateColumns: "360px 1fr", gap: 20 }} className="responsive-grid">
       <div style={{ background: PAPER_RAISED, border: "1px solid " + PAPER_LINE, borderRadius: 10, padding: 18, display: "flex", flexDirection: "column", gap: 12 }}>
         <label className="field-label">日期<input type="date" className="ledger-input" value={date} onChange={(e) => setDate(e.target.value)} /></label>
+        <label className="field-label">分店
+          <select className="ledger-input" value={storeId} onChange={(e) => setStoreId(e.target.value)}>
+            {STORES.map((st) => <option key={st.id} value={st.id}>{st.name}</option>)}
+          </select>
+        </label>
 
         <div style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 13, color: MUTED, background: PAPER, borderRadius: 8, padding: 12 }}>
           <div style={{ display: "flex", justifyContent: "space-between" }}><span>當日收入</span><span style={{ fontFamily: "IBM Plex Mono", color: SAGE }}>{fmtMoney(totalIncome)}</span></div>
@@ -798,7 +904,7 @@ function DailyClosingView({ transactions, closings, onSave }) {
 
 const PIE_COLORS = [BRASS, SAGE, WINE, "#6B5B95", "#4C7C8C", MUTED];
 
-function ReportsView({ transactions }) {
+function ReportsView({ transactions, allTransactions, storeFilter }) {
   const [mk, setMk] = useState(monthKey(todayStr()));
   const monthTx = transactions.filter((t) => monthKey(t.date) === mk);
   const income = monthTx.filter((t) => t.type === "income").reduce((s, t) => s + t.amount, 0);
@@ -984,6 +1090,7 @@ const TABS = [
 export default function FinanceApp() {
   const [loaded, setLoaded] = useState(false);
   const [tab, setTab] = useState("dashboard");
+  const [storeFilter, setStoreFilter] = useState(ALL_STORES);
   const [transactions, setTransactions] = useState([]);
   const [staff, setStaff] = useState([]);
   const [closings, setClosings] = useState([]);
@@ -1015,11 +1122,15 @@ export default function FinanceApp() {
 
   const addTx = useCallback((tx) => setTransactions((prev) => [tx, ...prev]), []);
   const deleteTx = useCallback((id) => setTransactions((prev) => prev.filter((t) => t.id !== id)), []);
+  const visibleTx = useMemo(() => filterByStore(transactions, storeFilter), [transactions, storeFilter]);
+  const activeStoreId = storeFilter === ALL_STORES || storeFilter === NO_STORE ? STORES[0].id : storeFilter;
+
   const addTxGroup = useCallback((rows, meta) => {
     const groupId = uid();
     const txs = rows.map((r) => ({
       id: uid(), groupId, type: meta.type, date: meta.date, category: r.category, amount: r.amount,
       note: meta.note, paymentMethod: meta.paymentMethod, staffId: meta.staffId,
+      storeId: meta.storeId || "",
     }));
     setTransactions((prev) => [...txs, ...prev]);
     const used = rows.filter((r) => r.materialId && r.qty > 0);
@@ -1057,9 +1168,9 @@ export default function FinanceApp() {
   const addTemplate = useCallback((name) => setTemplates((prev) => (prev.includes(name) ? prev : [...prev, name])), []);
   const removeTemplate = useCallback((name) => setTemplates((prev) => prev.filter((t) => t !== name)), []);
   const saveClosing = useCallback((c) => {
+    const same = (x) => x.date === c.date && (x.storeId || STORES[0].id) === (c.storeId || STORES[0].id);
     setClosings((prev) => {
-      const exists = prev.find((x) => x.date === c.date);
-      if (exists) return prev.map((x) => (x.date === c.date ? c : x));
+      if (prev.some(same)) return prev.map((x) => (same(x) ? c : x));
       return [c, ...prev];
     });
   }, []);
@@ -1138,7 +1249,20 @@ export default function FinanceApp() {
       <div style={{ maxWidth: 980, margin: "0 auto", padding: "24px 20px 0" }}>
         <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginBottom: 18, flexWrap: "wrap", gap: 8 }}>
           <div style={{ fontFamily: "'Fraunces', serif", fontSize: 24, fontWeight: 700, color: INK }}>髮廊財務帳本</div>
-          <div style={{ fontSize: 12, color: MUTED, fontFamily: "'IBM Plex Mono', monospace" }}>{todayStr()}</div>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <select
+              value={storeFilter}
+              onChange={(e) => setStoreFilter(e.target.value)}
+              className="ledger-input"
+              style={{ width: "auto", fontWeight: 600 }}
+              title="選定分店後，總覽、記帳、報表、結帳都只顯示那家店"
+            >
+              <option value={ALL_STORES}>全部分店</option>
+              {STORES.map((st) => <option key={st.id} value={st.id}>{st.name}</option>)}
+              <option value={NO_STORE}>未指定分店</option>
+            </select>
+            <div style={{ fontSize: 12, color: MUTED, fontFamily: "'IBM Plex Mono', monospace" }}>{todayStr()}</div>
+          </div>
         </div>
 
         <div style={{ display: "flex", gap: 4, borderBottom: "1px solid " + PAPER_LINE, marginBottom: 22, overflowX: "auto" }}>
@@ -1152,9 +1276,10 @@ export default function FinanceApp() {
           })}
         </div>
 
-        {tab === "dashboard" && <Dashboard transactions={transactions} staff={staff} />}
-        {tab === "ledger" && <LedgerView transactions={transactions} staff={staff} materials={materials} onAdd={addTxGroup} onDelete={deleteTxGroup} />}
+        {tab === "dashboard" && <Dashboard transactions={visibleTx} allTransactions={transactions} staff={staff} storeFilter={storeFilter} />}
+        {tab === "ledger" && <LedgerView transactions={visibleTx} staff={staff} materials={materials} defaultStoreId={activeStoreId} onAdd={addTxGroup} onDelete={deleteTxGroup} />}
         {tab === "materials" && <MaterialsView materials={materials} onAdd={addMaterial} onUpdate={updateMaterial} onDelete={deleteMaterial} />}
+        {/* 薪資刻意用完整 transactions，不受分店篩選影響——設計師的抽成是兩店合併計算 */}
         {tab === "staff" && (
           <PayrollLock title="員工薪資">
             <StaffView
@@ -1165,8 +1290,8 @@ export default function FinanceApp() {
             />
           </PayrollLock>
         )}
-        {tab === "closing" && <DailyClosingView transactions={transactions} closings={closings} onSave={saveClosing} />}
-        {tab === "reports" && <ReportsView transactions={transactions} />}
+        {tab === "closing" && <DailyClosingView transactions={transactions} closings={closings} storeFilter={storeFilter} onSave={saveClosing} />}
+        {tab === "reports" && <ReportsView transactions={visibleTx} allTransactions={transactions} storeFilter={storeFilter} />}
       </div>
     </div>
   );
