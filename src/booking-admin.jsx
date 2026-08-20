@@ -457,7 +457,7 @@ export function BookingInbox({ appointments, customers, staff, services, roster,
       })}
 
       <div style={{ marginTop: 14, fontSize: 12, color: MUTED, lineHeight: 1.8 }}>
-        確認後預約會以「已確認」狀態進到班表，記得回頭按一次「發布空檔」，公開頁的時段才會更新。
+        確認後預約會以「已確認」狀態進到班表，公開頁的時段會自動更新。
         選「建立新顧客資料」會把姓名、電話、LINE ID、過敏記錄一起寫進顧客模組。
       </div>
     </div>

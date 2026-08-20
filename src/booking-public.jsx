@@ -353,7 +353,7 @@ export default function PublicBookingPage() {
       * { box-sizing: border-box; }
       body { margin: 0; }
       .bk-wrap { font-family: 'IBM Plex Sans', sans-serif; background: ${PAPER}; color: ${INK}; min-height: 100vh; padding: 22px 16px 96px; }
-      .bk-inner { max-width: 520px; margin: 0 auto; }
+      .bk-inner { max-width: 520px; margin: 0 auto; width: 100%; }
       .bk-title { font-family: 'Fraunces', serif; font-size: 27px; font-weight: 700; letter-spacing: 0.01em; }
       .bk-sub { font-size: 13px; color: ${MUTED}; margin-top: 5px; line-height: 1.6; }
       .dots { display: flex; gap: 6px; margin: 18px 0 20px; }
@@ -373,8 +373,9 @@ export default function PublicBookingPage() {
       .entry-card:hover { border-color: ${BRASS}; background: ${BRASS_LIGHT}; }
       .entry-ico { width: 46px; height: 46px; border-radius: 12px; background: ${SAGE_LIGHT}; color: ${SAGE};
                    display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
-      .entry-t { font-family: 'Fraunces', serif; font-size: 17px; font-weight: 600; }
-      .entry-s { font-size: 12.5px; color: ${MUTED}; margin-top: 3px; line-height: 1.5; }
+      .entry-text { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+      .entry-t { display: block; font-family: 'Fraunces', serif; font-size: 17px; font-weight: 600; }
+      .entry-s { display: block; font-size: 12.5px; color: ${MUTED}; line-height: 1.5; }
 
       .store-card {
         display: block; width: 100%; text-align: left; font-family: inherit; color: ${INK};
@@ -400,6 +401,7 @@ export default function PublicBookingPage() {
       .avatar-img { border-radius: 50%; object-fit: cover; object-position: 50% 22%; flex-shrink: 0; background: ${SAGE_LIGHT}; }
       .avatar-ph { border-radius: 50%; background: ${SAGE_LIGHT}; color: ${SAGE}; display: flex;
                    align-items: center; justify-content: center; font-family: 'Fraunces', serif; font-weight: 600; flex-shrink: 0; }
+      .staff-text { display: flex; flex-direction: column; min-width: 0; flex: 1; }
       .staff-name { font-size: 15px; font-weight: 600; }
       .staff-title { font-size: 11.5px; color: ${MUTED}; }
       .staff-blurb { font-size: 12.5px; color: ${MUTED}; margin-top: 5px; line-height: 1.55; }
@@ -537,7 +539,7 @@ export default function PublicBookingPage() {
         <div style={{ height: 26 }} />
         <button className="entry-card" onClick={() => chooseEntry("store")}>
           <span className="entry-ico"><Store size={22} /></span>
-          <span>
+          <span className="entry-text">
             <span className="entry-t">依分店預約</span>
             <span className="entry-s">先選店，再看那天有哪些設計師</span>
           </span>
@@ -545,7 +547,7 @@ export default function PublicBookingPage() {
         </button>
         <button className="entry-card" onClick={() => chooseEntry("staff")}>
           <span className="entry-ico"><Users size={22} /></span>
-          <span>
+          <span className="entry-text">
             <span className="entry-t">指定設計師</span>
             <span className="entry-s">先選設計師，再看他哪幾天在哪家店</span>
           </span>
@@ -611,12 +613,12 @@ export default function PublicBookingPage() {
                 <button key={d.id} className={"staff-card" + (on ? " staff-card-on" : "")}
                   onClick={() => { setStaffId(d.id); setDate(""); setStartMin(null); }}>
                   <Avatar photo={d.photo} name={d.name} size={58} />
-                  <span style={{ minWidth: 0, flex: 1 }}>
+                  <span className="staff-text">
                     <span style={{ display: "flex", alignItems: "center", gap: 7 }}>
                       <span className="staff-name">{d.name}</span>
                       <span className="staff-title">{d.title}</span>
                     </span>
-                    {d.blurb && <span className="staff-blurb">{d.blurb}</span>}
+                    {d.blurb && <span className="staff-blurb" style={{ display: "block" }}>{d.blurb}</span>}
                     <span className="tags">
                       {inStores.map((n) => <span key={n} className="tag tag-store">{n}</span>)}
                       {(d.specialties || []).map((sp) => <span key={sp} className="tag">{sp}</span>)}
