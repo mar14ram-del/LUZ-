@@ -311,6 +311,9 @@ export function RosterEditor({ staff, services, roster, onSave }) {
 
       <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: 14 }}>
         <div style={{ fontFamily: "'Fraunces', serif", fontSize: 17, fontWeight: 600 }}>設計師與班表</div>
+        <span style={{ fontSize: 10, color: MUTED, border: "1px solid " + PAPER_LINE, borderRadius: 999, padding: "2px 8px" }}>
+          含個人價目
+        </span>
         <div style={{ flex: 1 }} />
         {saved && <span style={{ fontSize: 12, color: SAGE, display: "flex", alignItems: "center", gap: 5 }}><Check size={13} /> 已儲存</span>}
         <button className="ledger-btn ledger-btn-primary" onClick={save} disabled={saving}>
@@ -419,9 +422,15 @@ export function RosterEditor({ staff, services, roster, onSave }) {
                                 e.target.value.split(/[,，]/).map((x) => x.trim()).filter(Boolean))}
                             />
                           </label>
-                          {(services || []).length > 0 && (
-                            <div style={{ marginTop: 6, marginBottom: 14 }}>
-                              <div style={{ fontSize: 12, color: MUTED, marginBottom: 2 }}>個人價目與時間</div>
+                          <div style={{ marginTop: 6, marginBottom: 14 }}>
+                            <div style={{ fontSize: 12, color: MUTED, marginBottom: 2 }}>個人價目與時間</div>
+                            {(services || []).length === 0 ? (
+                              <div className="rs-band" style={{ background: BRASS_LIGHT, color: BRASS, marginTop: 8 }}>
+                                <AlertTriangle size={14} style={{ flexShrink: 0, marginTop: 1 }} />
+                                還沒有服務項目。先到右上角「服務與設定」建立剪髮、染髮等項目，這裡才能設定個人價格。
+                              </div>
+                            ) : (
+                            <>
                               <div style={{ fontSize: 11, color: MUTED, lineHeight: 1.6, marginBottom: 9 }}>
                                 留空就沿用共同價目。只填不一樣的項目就好。
                               </div>
@@ -463,8 +472,9 @@ export function RosterEditor({ staff, services, roster, onSave }) {
                                   全部改回共同價目
                                 </button>
                               )}
-                            </div>
-                          )}
+                            </>
+                            )}
+                          </div>
 
                           <button
                             className="ledger-btn"
