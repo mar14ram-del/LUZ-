@@ -50,6 +50,9 @@ function parseDate(s) {
 function todayStr() { return fmtDate(new Date()); }
 function weekdayOf(s) { return WEEKDAY_ZH[parseDate(s).getDay()]; }
 function fmtMoney(n) { return "NT$" + (Math.round(Number(n) || 0)).toLocaleString("zh-TW"); }
+/** 客人看到的價格一律加「起」——實際金額依髮長髮況而定 */
+function fmtFrom(n) { return fmtMoney(n) + " 起"; }
+const PRICE_NOTE = "價格會因髮長、髮量與髮況調整，最終金額請現場與設計師確認。";
 function niceDate(s) {
   const d = parseDate(s);
   return (d.getMonth() + 1) + " 月 " + d.getDate() + " 日（" + weekdayOf(s) + "）";
@@ -578,12 +581,16 @@ export default function PublicBookingPage() {
           <div className="summary-row"><span>日期</span><span>{niceDate(date)}</span></div>
           <div className="summary-row"><span>時間</span><span>{toHHMM(startMin)}–{toHHMM(startMin + totalFor(st, pickedServices).durationMin)}</span></div>
           <div className="summary-row"><span>設計師</span><span>{st ? st.name : "由店家安排"}</span></div>
-          <div className="summary-row"><span>服務</span><span>{pickedServices.map((s) => s.name).join("、")}　約 {fmtMoney(totalFor(st, pickedServices).price)}</span></div>
+          <div className="summary-row"><span>服務</span><span>{pickedServices.map((s) => s.name).join("、")}</span></div>
+          <div className="summary-row"><span>金額</span><span>{fmtFrom(totalFor(st, pickedServices).price)}</span></div>
           <div className="summary-row"><span>姓名</span><span>{form.customerName}</span></div>
         </div>
-        <div className="note-band">
+        <div className="note-band" style={{ marginBottom: 10 }}>
           <AlertCircle size={15} style={{ flexShrink: 0, marginTop: 1 }} />
           這是預約申請，還不是確認完成的預約。收到我們的確認通知後才算正式成立。
+        </div>
+        <div style={{ fontSize: 12, color: MUTED, lineHeight: 1.7, padding: "0 2px" }}>
+          {PRICE_NOTE}
         </div>
       </div>
     </div>;
@@ -613,6 +620,11 @@ export default function PublicBookingPage() {
           </span>
           <span style={{ marginLeft: "auto" }}><ChevronRight size={18} color={MUTED} /></span>
         </button>
+
+        <div className="note-band" style={{ marginTop: 6 }}>
+          <AlertCircle size={15} style={{ flexShrink: 0, marginTop: 1 }} />
+          {PRICE_NOTE}
+        </div>
 
         <div style={{ marginTop: 26 }}>
           <div style={{ fontSize: 12, color: MUTED, marginBottom: 10 }}>我們的分店</div>
@@ -716,7 +728,7 @@ export default function PublicBookingPage() {
                 </span>
                 <span className="opt-meta">
                   {fmtRange(Math.min(...ds), Math.max(...ds))} 分
-                  {Math.max(...ps) > 0 && "　" + fmtRange(Math.min(...ps), Math.max(...ps), fmtMoney)}
+                  {Math.max(...ps) > 0 && "　" + fmtRange(Math.min(...ps), Math.max(...ps), fmtMoney) + " 起"}
                 </span>
               </button>
             );
@@ -726,14 +738,13 @@ export default function PublicBookingPage() {
               <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13.5 }}>
                 <span style={{ color: MUTED }}>共 {fmtRange(range.minDur, range.maxDur)} 分鐘</span>
                 <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontWeight: 600 }}>
-                  約 {fmtRange(range.minPrice, range.maxPrice, fmtMoney)}
+                  {fmtRange(range.minPrice, range.maxPrice, fmtMoney)} 起
                 </span>
               </div>
-              {range.minPrice !== range.maxPrice && (
-                <div style={{ fontSize: 11.5, color: MUTED, marginTop: 6, lineHeight: 1.5 }}>
-                  價格與時間依設計師而異，選好時段後會顯示實際金額。
-                </div>
-              )}
+              <div style={{ fontSize: 11.5, color: MUTED, marginTop: 7, lineHeight: 1.6 }}>
+                {range.minPrice !== range.maxPrice && "價格與時間依設計師而異。"}
+                {PRICE_NOTE}
+              </div>
             </div>
           )}
         </div>
@@ -804,7 +815,7 @@ export default function PublicBookingPage() {
                     <br />
                     {(() => {
                       const t = totalOf(slotStaff);
-                      return t.durationMin + " 分鐘　" + fmtMoney(t.price);
+                      return t.durationMin + " 分鐘　" + fmtFrom(t.price);
                     })()}
                   </span>
                 </div>
@@ -825,7 +836,12 @@ export default function PublicBookingPage() {
             <div className="summary-row"><span>日期</span><span>{niceDate(date)}</span></div>
             <div className="summary-row"><span>時間</span><span>{toHHMM(startMin)}–{toHHMM(startMin + totalOf(finalStaffId).durationMin)}</span></div>
             <div className="summary-row"><span>設計師</span><span>{staffById[finalStaffId] ? staffById[finalStaffId].name : "由店家安排"}</span></div>
-            <div className="summary-row"><span>服務</span><span>{pickedServices.map((s) => s.name).join("、")}　約 {fmtMoney(totalOf(finalStaffId).price)}</span></div>
+            <div className="summary-row"><span>服務</span><span>{pickedServices.map((s) => s.name).join("、")}</span></div>
+            <div className="summary-row"><span>金額</span><span>{fmtFrom(totalOf(finalStaffId).price)}</span></div>
+          </div>
+          <div className="note-band" style={{ marginTop: -6, marginBottom: 16 }}>
+            <AlertCircle size={15} style={{ flexShrink: 0, marginTop: 1 }} />
+            {PRICE_NOTE}
           </div>
 
           <div className="card">
