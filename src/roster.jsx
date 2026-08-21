@@ -51,7 +51,8 @@ export function resolvePhoto(p) {
 
 export function emptyRoster() {
   return {
-    profiles: {},      // staffId -> { photo, blurb, specialties[], title, publicVisible }
+    profiles: {},      // staffId -> { photo, blurb, specialties[], title, publicVisible,
+                       //              rates: { 服務id: { price, durationMin } } }
     weekly: {},        // staffId -> { 0..6 -> storeId | null }
     overrides: {},     // "YYYY-MM-DD" -> { staffId -> storeId | null }
     closedDates: [],   // 兩店都公休
@@ -92,6 +93,34 @@ export function storeOfStaffOn(roster, staffId, dateStr) {
   return week[weekdayOfDate(dateStr)] || null;
 }
 
+/**
+ * 某位設計師某個服務的實際價格與時間。
+ * 沒有個別設定就沿用服務清單的預設值。
+ */
+export function rateOf(roster, staffId, service) {
+  if (!service) return { price: 0, durationMin: 0, custom: false };
+  const prof = (roster && roster.profiles && roster.profiles[staffId]) || {};
+  const r = (prof.rates && prof.rates[service.id]) || {};
+  const hasPrice = r.price !== undefined && r.price !== null && r.price !== "";
+  const hasDur = r.durationMin !== undefined && r.durationMin !== null && r.durationMin !== "";
+  return {
+    price: hasPrice ? Number(r.price) : Number(service.price) || 0,
+    durationMin: hasDur ? Number(r.durationMin) : Number(service.durationMin) || 0,
+    custom: hasPrice || hasDur,
+  };
+}
+
+/** 一組服務對某位設計師的總時間與總金額 */
+export function totalFor(roster, staffId, services) {
+  return (services || []).reduce(
+    (acc, sv) => {
+      const r = rateOf(roster, staffId, sv);
+      return { price: acc.price + r.price, durationMin: acc.durationMin + r.durationMin };
+    },
+    { price: 0, durationMin: 0 }
+  );
+}
+
 /** 某天某家店有哪些設計師 */
 export function staffAtStoreOn(roster, allStaff, storeId, dateStr) {
   return (allStaff || []).filter((s) => storeOfStaffOn(roster, s.id, dateStr) === storeId);
@@ -117,6 +146,7 @@ export function publicProfiles(roster, allStaff) {
         photo: resolvePhoto(p.photo),
         blurb: p.blurb || "",
         specialties: p.specialties || [],
+        rates: p.rates || {},
       };
     });
 }
@@ -136,7 +166,7 @@ function todayStr() {
   return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
 }
 
-export function RosterEditor({ staff, roster, onSave }) {
+export function RosterEditor({ staff, services, roster, onSave }) {
   const [draft, setDraft] = useState(() => normalizeRoster(roster));
   const [expanded, setExpanded] = useState("");
   const [saving, setSaving] = useState(false);
@@ -162,6 +192,26 @@ export function RosterEditor({ staff, roster, onSave }) {
   function setProfile(staffId, key, value) {
     const profiles = { ...draft.profiles };
     profiles[staffId] = { ...(profiles[staffId] || {}), [key]: value };
+    markDirty({ ...draft, profiles });
+  }
+
+  function setRate(staffId, serviceId, key, value) {
+    const profiles = { ...draft.profiles };
+    const prof = { ...(profiles[staffId] || {}) };
+    const rates = { ...(prof.rates || {}) };
+    const one = { ...(rates[serviceId] || {}) };
+    if (value === "" || value === null) delete one[key];
+    else one[key] = Number(value);
+    if (Object.keys(one).length === 0) delete rates[serviceId];
+    else rates[serviceId] = one;
+    prof.rates = rates;
+    profiles[staffId] = prof;
+    markDirty({ ...draft, profiles });
+  }
+
+  function clearRates(staffId) {
+    const profiles = { ...draft.profiles };
+    profiles[staffId] = { ...(profiles[staffId] || {}), rates: {} };
     markDirty({ ...draft, profiles });
   }
 
@@ -249,6 +299,14 @@ export function RosterEditor({ staff, roster, onSave }) {
                      background: ${WINE_LIGHT}; color: ${WINE}; border-radius: 999px; padding: 4px 6px 4px 11px; }
         .rs-x { cursor: pointer; opacity: 0.65; display: flex; }
         .rs-x:hover { opacity: 1; }
+        .rt-table { display: flex; flex-direction: column; gap: 5px; }
+        .rt-row { display: grid; grid-template-columns: 1fr 88px 100px; gap: 8px; align-items: center; }
+        .rt-head { font-size: 11px; color: ${MUTED}; }
+        .rt-head span:not(:first-child) { text-align: center; }
+        .rt-row input { text-align: center; }
+        @media (max-width: 620px) {
+          .rt-row { grid-template-columns: 1fr 70px 78px; }
+        }
       `}</style>
 
       <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: 14 }}>
@@ -361,6 +419,53 @@ export function RosterEditor({ staff, roster, onSave }) {
                                 e.target.value.split(/[,，]/).map((x) => x.trim()).filter(Boolean))}
                             />
                           </label>
+                          {(services || []).length > 0 && (
+                            <div style={{ marginTop: 6, marginBottom: 14 }}>
+                              <div style={{ fontSize: 12, color: MUTED, marginBottom: 2 }}>個人價目與時間</div>
+                              <div style={{ fontSize: 11, color: MUTED, lineHeight: 1.6, marginBottom: 9 }}>
+                                留空就沿用共同價目。只填不一樣的項目就好。
+                              </div>
+                              <div className="rt-table">
+                                <div className="rt-row rt-head">
+                                  <span>服務</span><span>時間(分)</span><span>價格</span>
+                                </div>
+                                {services.map((sv) => {
+                                  const r = (prof.rates || {})[sv.id] || {};
+                                  const dirtyDur = r.durationMin !== undefined && r.durationMin !== "";
+                                  const dirtyPrice = r.price !== undefined && r.price !== "";
+                                  return (
+                                    <div key={sv.id} className="rt-row">
+                                      <span style={{ fontSize: 13 }}>
+                                        {sv.name}
+                                        {(dirtyDur || dirtyPrice) && (
+                                          <span style={{ fontSize: 10, color: BRASS, marginLeft: 5 }}>已調整</span>
+                                        )}
+                                      </span>
+                                      <input
+                                        type="number" className="ledger-input"
+                                        placeholder={String(sv.durationMin)}
+                                        value={dirtyDur ? r.durationMin : ""}
+                                        onChange={(e) => setRate(d.id, sv.id, "durationMin", e.target.value)}
+                                      />
+                                      <input
+                                        type="number" className="ledger-input"
+                                        placeholder={String(sv.price)}
+                                        value={dirtyPrice ? r.price : ""}
+                                        onChange={(e) => setRate(d.id, sv.id, "price", e.target.value)}
+                                      />
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                              {Object.keys(prof.rates || {}).length > 0 && (
+                                <button className="ledger-btn" style={{ marginTop: 9, fontSize: 12 }}
+                                  onClick={() => clearRates(d.id)}>
+                                  全部改回共同價目
+                                </button>
+                              )}
+                            </div>
+                          )}
+
                           <button
                             className="ledger-btn"
                             onClick={() => setProfile(d.id, "publicVisible", prof.publicVisible === false)}

@@ -9,7 +9,7 @@
 import React, { useState, useEffect, useMemo, useCallback } from "react";
 import { supabase } from "./supabaseClient";
 import { storeName } from "./stores";
-import { storeOfStaffOn, normalizeRoster } from "./roster";
+import { storeOfStaffOn, normalizeRoster, rateOf } from "./roster";
 import {
   Inbox, Check, X, RefreshCw, UploadCloud, AlertTriangle, Phone,
   UserPlus, Link2, Clock, Loader2, CircleAlert, Sparkles,
@@ -209,10 +209,17 @@ export function BookingInbox({ appointments, customers, staff, services, roster,
     }
 
     const svcIds = Array.isArray(req.service_ids) ? req.service_ids : [];
+    // 用實際指派到的設計師的價目重算，而不是客人送出時看到的
+    const r = normalizeRoster(roster);
     const svcObjs = svcIds
       .map((id) => (services || []).find((s) => s.id === id))
       .filter(Boolean)
-      .map((s) => ({ id: s.id, name: s.name, durationMin: s.durationMin, price: s.price }));
+      .map((s) => {
+        const rr = rateOf(r, staffId, s);
+        return { id: s.id, name: s.name, durationMin: rr.durationMin, price: rr.price };
+      });
+    const recalcDur = svcObjs.reduce((t, x) => t + (x.durationMin || 0), 0);
+    const recalcPrice = svcObjs.reduce((t, x) => t + (x.price || 0), 0);
 
     const rosterStore = storeOfStaffOn(normalizeRoster(roster), staffId, req.req_date);
     const appt = {
@@ -220,14 +227,14 @@ export function BookingInbox({ appointments, customers, staff, services, roster,
       storeId: rosterStore || req.store_id || "",
       date: req.req_date,
       startMin: req.start_min,
-      durationMin: req.duration_min,
+      durationMin: recalcDur || req.duration_min,
       durationEdited: true,
       customerId: customerId || "",
       guestName: customerId ? "" : req.customer_name,
       guestPhone: customerId ? "" : req.phone,
       staffId,
       services: svcObjs.length ? svcObjs : (req.service_names ? [{ id: "req", name: req.service_names, durationMin: req.duration_min, price: Number(req.est_price) || 0 }] : []),
-      price: Number(req.est_price) || 0,
+      price: recalcPrice || Number(req.est_price) || 0,
       status: "confirmed",
       source: "線上預約",
       note: [
