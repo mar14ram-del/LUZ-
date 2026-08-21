@@ -13,7 +13,7 @@
 
 import { useEffect, useRef } from "react";
 import { supabase } from "./supabaseClient";
-import { STORES, getStore } from "./stores";
+import { STORES, getStore, BRAND } from "./stores";
 import { storeOfStaffOn, publicProfiles, normalizeRoster } from "./roster";
 
 const PUBLISH_DAYS = 60;
@@ -90,7 +90,7 @@ export async function publishConfig({ staff, services, settings, roster }) {
 
   const payload = {
     version: 2,
-    salonName: settings.salonName || "LUZ",
+    salonName: BRAND,
     notice: settings.publicNotice || "線上預約，選好時段後我們會與您確認。",
     slotMin: settings.slotMin || 15,
     stores: STORES.map((s) => ({

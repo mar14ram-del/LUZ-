@@ -9,7 +9,7 @@ import {
 } from "lucide-react";
 import { loadKey, saveKey } from "./storage";
 import PayrollLock from "./payroll-lock";
-import { STORES, storeName } from "./stores";
+import { STORES, storeName, BRAND } from "./stores";
 
 const FONT_IMPORT = `@import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap');`;
 
@@ -1248,7 +1248,7 @@ export default function FinanceApp() {
 
       <div style={{ maxWidth: 980, margin: "0 auto", padding: "24px 20px 0" }}>
         <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginBottom: 18, flexWrap: "wrap", gap: 8 }}>
-          <div style={{ fontFamily: "'Fraunces', serif", fontSize: 24, fontWeight: 700, color: INK }}>髮廊財務帳本</div>
+          <div style={{ fontFamily: "'Fraunces', serif", fontSize: 24, fontWeight: 700, color: INK }}>{BRAND} · 財務帳本</div>
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
             <select
               value={storeFilter}

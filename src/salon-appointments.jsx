@@ -4,8 +4,8 @@ import {
   ChevronLeft, ChevronRight, AlertTriangle, Check, Copy, Download,
   ExternalLink, Phone, Save, CircleAlert, Inbox, Users, Store,
 } from "lucide-react";
-import { STORES, getStore, storeName } from "./stores";
-import { RosterEditor, storeOfStaffOn, normalizeRoster, ROSTER_KEY } from "./roster";
+import { STORES, getStore, storeName, BRAND } from "./stores";
+import { RosterEditor, storeOfStaffOn, normalizeRoster, rateOf, totalFor, ROSTER_KEY } from "./roster";
 import { BookingInbox } from "./booking-admin";
 import { useAutoPublish, SyncIndicator } from "./booking-sync";
 
@@ -56,8 +56,8 @@ const DEFAULT_SETTINGS = {
   closeTime: "21:00",
   slotMin: 15,
   reminderTemplate:
-    "{{顧客}} 您好，這裡是 LUZ 髮廊 🌿\n提醒您的預約：\n\n📅 {{日期}}（{{星期}}）{{時間}}\n💁 設計師：{{設計師}}\n✂️ 服務：{{服務}}\n\n如需改期請直接回覆這則訊息，謝謝您！",
-  salonName: "LUZ 髮廊",
+    "{{顧客}} 您好，這裡是 " + BRAND + " 🌿\n提醒您的預約：\n\n📅 {{日期}}（{{星期}}）{{時間}}\n💁 設計師：{{設計師}}\n✂️ 服務：{{服務}}\n\n如需改期請直接回覆這則訊息，謝謝您！",
+  salonName: BRAND,
   salonAddress: "",
 };
 
@@ -290,7 +290,7 @@ function reminderText(appt, customerMap, staffMap, settings) {
     .replace(/\{\{時間\}\}/g, toHHMM(appt.startMin) + "–" + toHHMM(appt.startMin + appt.durationMin))
     .replace(/\{\{設計師\}\}/g, staffName)
     .replace(/\{\{服務\}\}/g, serviceSummary(appt))
-    .replace(/\{\{店名\}\}/g, settings.salonName || "");
+    .replace(/\{\{店名\}\}/g, BRAND);
 }
 
 /* ---------- small shared pieces ---------- */
@@ -402,7 +402,10 @@ function AppointmentForm({ appt, isNew, customers, staff, services, settings, ro
   function toggleService(sv) {
     setForm((f) => {
       const has = f.services.some((x) => x.id === sv.id);
-      const next = has ? f.services.filter((x) => x.id !== sv.id) : [...f.services, { id: sv.id, name: sv.name, durationMin: sv.durationMin, price: sv.price }];
+      const r = rateOf(normalizeRoster(roster), f.staffId, sv);
+      const next = has
+        ? f.services.filter((x) => x.id !== sv.id)
+        : [...f.services, { id: sv.id, name: sv.name, durationMin: r.durationMin, price: r.price }];
       const sumDur = next.reduce((t, x) => t + (x.durationMin || 0), 0);
       const sumPrice = next.reduce((t, x) => t + (x.price || 0), 0);
       return {
@@ -412,6 +415,24 @@ function AppointmentForm({ appt, isNew, customers, staff, services, settings, ro
         price: sumPrice,
       };
     });
+  }
+
+  /** 換設計師時，已選的服務要換成他的價目 */
+  function applyStaffRates(f, sid) {
+    if (!f.services || f.services.length === 0) return f;
+    const r = normalizeRoster(roster);
+    const next = f.services.map((x) => {
+      const sv = (services || []).find((y) => y.id === x.id);
+      if (!sv) return x;
+      const rr = rateOf(r, sid, sv);
+      return { ...x, durationMin: rr.durationMin, price: rr.price };
+    });
+    return {
+      ...f,
+      services: next,
+      durationMin: f.durationEdited ? f.durationMin : next.reduce((t, x) => t + (x.durationMin || 0), 0),
+      price: next.reduce((t, x) => t + (x.price || 0), 0),
+    };
   }
 
   const customer = customerMap[form.customerId];
@@ -557,7 +578,7 @@ function AppointmentForm({ appt, isNew, customers, staff, services, settings, ro
             onChange={(e) => {
               const sid = e.target.value;
               const auto = storeOfStaffOn(normalizeRoster(roster), sid, form.date);
-              setForm((f) => ({ ...f, staffId: sid, storeId: auto || f.storeId }));
+              setForm((f) => applyStaffRates({ ...f, staffId: sid, storeId: auto || f.storeId }, sid));
             }}>
             <option value="">— 請選擇 —</option>
             {designers.map((s) => {
@@ -590,7 +611,10 @@ function AppointmentForm({ appt, isNew, customers, staff, services, settings, ro
             const on = form.services.some((x) => x.id === sv.id);
             return (
               <button key={sv.id} type="button" className={"chip" + (on ? " chip-on" : "")} onClick={() => toggleService(sv)}>
-                {on ? "✓ " : ""}{sv.name} <span style={{ opacity: 0.7 }}>{sv.durationMin}分</span>
+                {on ? "✓ " : ""}{sv.name}{" "}
+                <span style={{ opacity: 0.7 }}>
+                  {rateOf(normalizeRoster(roster), form.staffId, sv).durationMin}分
+                </span>
               </button>
             );
           })}
@@ -726,8 +750,13 @@ function ServiceSettings({ services, settings, onSaveServices, onSaveSettings })
       <div>
         <div className="sub-head">店家資訊與提醒範本</div>
         <div className="form-grid-2">
-          <Field label="店名"><input className="ledger-input" value={cfg.salonName} onChange={(e) => setCfgKey("salonName", e.target.value)} /></Field>
-          <Field label="地址（會寫進日曆事件）"><input className="ledger-input" value={cfg.salonAddress} onChange={(e) => setCfgKey("salonAddress", e.target.value)} /></Field>
+          <Field label="品牌名稱" hint="全站共用。要改的話請改 src/stores.jsx 最上面的 BRAND。">
+            <input className="ledger-input" value={BRAND} readOnly style={{ background: "#F2EFE6", color: MUTED }} />
+          </Field>
+          <Field label="分店地址" hint="各店地址在 src/stores.jsx 設定，會寫進日曆事件。">
+            <input className="ledger-input" value={STORES.map((s) => s.name + "：" + s.address).join("　")} readOnly
+              style={{ background: "#F2EFE6", color: MUTED }} />
+          </Field>
         </div>
         <Field label="LINE 提醒訊息範本" hint="可用的變數：{{顧客}} {{日期}} {{星期}} {{時間}} {{設計師}} {{服務}} {{店名}}">
           <textarea className="ledger-input" rows={7} value={cfg.reminderTemplate} onChange={(e) => setCfgKey("reminderTemplate", e.target.value)} />
@@ -1075,7 +1104,8 @@ export default function SalonAppointmentApp() {
       ]);
       setAppts(a);
       if (sv) setServices(sv);
-      if (cfg) setSettings({ ...DEFAULT_SETTINGS, ...cfg });
+      // 店名一律以 stores.jsx 的 BRAND 為準，忽略資料庫裡的舊值
+      if (cfg) setSettings({ ...DEFAULT_SETTINGS, ...cfg, salonName: BRAND });
       setCustomers(cs);
       setStaff(st);
       setRoster(normalizeRoster(ro));
@@ -1354,7 +1384,7 @@ export default function SalonAppointmentApp() {
 
       <div style={{ maxWidth: 1180, margin: "0 auto", padding: "24px 18px 0" }}>
         <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", flexWrap: "wrap", gap: 8, marginBottom: 16 }}>
-          <div style={{ fontFamily: "'Fraunces', serif", fontSize: 24, fontWeight: 700 }}>預約管理</div>
+          <div style={{ fontFamily: "'Fraunces', serif", fontSize: 24, fontWeight: 700 }}>{BRAND} · 預約管理</div>
           <button className="ledger-btn" onClick={() => setShowSettings(true)}><Settings size={14} /> 服務與設定</button>
         </div>
 
@@ -1480,6 +1510,7 @@ export default function SalonAppointmentApp() {
           {view === "roster" && (
             <RosterEditor
               staff={staff}
+              services={services}
               roster={roster}
               onSave={async (next) => {
                 setRoster(next);
