@@ -6,7 +6,7 @@ import {
 } from "lucide-react";
 import { STORES, getStore, storeName, BRAND } from "./stores";
 import { RosterEditor, storeOfStaffOn, normalizeRoster, rateOf, totalFor, ROSTER_KEY } from "./roster";
-import { BookingInbox } from "./booking-admin";
+import { BookingInbox, usePendingRequestCount } from "./booking-admin";
 import { useAutoPublish, SyncIndicator } from "./booking-sync";
 
 const FONT_IMPORT = `@import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap');`;
@@ -1091,6 +1091,7 @@ export default function SalonAppointmentApp() {
   const [toast, setToast] = useState("");
   const [storeFilter, setStoreFilter] = useState("");
   const [sync, setSync] = useState({ status: "idle", message: "" });
+  const pending = usePendingRequestCount();
 
   useEffect(() => {
     (async () => {
@@ -1318,6 +1319,21 @@ export default function SalonAppointmentApp() {
         .stat-value { font-family: 'IBM Plex Mono', monospace; font-size: 17px; font-weight: 600; }
         .board { background: ${PAPER_RAISED}; border: 1px solid ${PAPER_LINE}; border-radius: 10px; padding: 14px; }
         .empty-state { padding: 50px 20px; text-align: center; color: ${MUTED}; font-size: 13px; line-height: 1.7; }
+        .pending-btn {
+          display: inline-flex; align-items: center; gap: 6px; font-family: 'IBM Plex Sans', sans-serif;
+          font-size: 13px; font-weight: 500; color: ${MUTED}; background: #FFFDF8;
+          border: 1px solid ${PAPER_LINE}; border-radius: 6px; padding: 8px 14px; cursor: pointer; white-space: nowrap;
+        }
+        .pending-btn:hover { border-color: ${BRASS}; color: ${INK}; }
+        .pending-btn-on { background: ${INK}; color: ${PAPER}; border-color: ${INK}; }
+        .pending-btn-alert { border-color: ${BRASS}; color: ${BRASS}; background: ${BRASS_LIGHT}; }
+        .pending-btn-alert.pending-btn-on { background: ${INK}; color: ${PAPER}; border-color: ${INK}; }
+        .pending-badge {
+          display: inline-flex; align-items: center; justify-content: center; min-width: 19px; height: 19px;
+          padding: 0 5px; border-radius: 999px; background: ${BRASS}; color: #FFF;
+          font-family: 'IBM Plex Mono', monospace; font-size: 11px; font-weight: 600;
+        }
+        .pending-btn-on .pending-badge { background: ${PAPER}; color: ${INK}; }
 
         .day-scroll { overflow-x: auto; }
         .day-grid { display: grid; min-width: 520px; }
@@ -1405,7 +1421,7 @@ export default function SalonAppointmentApp() {
 
         <div className="toolbar">
           <div className="view-tabs">
-            {[["day", "日", Calendar], ["week", "週", CalendarDays], ["month", "月", CalendarDays], ["list", "清單", List], ["inbox", "申請", Inbox], ["roster", "班表", Users]].map(([k, label, Icon]) => (
+            {[["day", "日", Calendar], ["week", "週", CalendarDays], ["month", "月", CalendarDays], ["list", "清單", List], ["roster", "設計師與班表", Users]].map(([k, label, Icon]) => (
               <button key={k} className={"view-tab" + (view === k ? " view-tab-on" : "")} onClick={() => setView(k)}>
                 <Icon size={14} /> {label}
               </button>
@@ -1443,6 +1459,16 @@ export default function SalonAppointmentApp() {
             </button>
           )}
           <SyncIndicator status={sync.status} message={sync.message} onPublishNow={autoPublish.publishNow} />
+
+          <button
+            className={"pending-btn" + (view === "inbox" ? " pending-btn-on" : "") + (pending.count > 0 ? " pending-btn-alert" : "")}
+            onClick={() => setView("inbox")}
+            title="客人從公開頁送出、還沒確認的預約"
+          >
+            <Inbox size={15} /> 待確認預約
+            {pending.count > 0 && <span className="pending-badge">{pending.count}</span>}
+          </button>
+
           <button className="ledger-btn ledger-btn-primary" onClick={() => openNew()}>
             <Plus size={15} /> 新增預約
           </button>
@@ -1505,6 +1531,7 @@ export default function SalonAppointmentApp() {
                 await saveKey(CUSTOMER_KEY, next);
                 return fresh;
               }}
+              onHandled={pending.refresh}
             />
           )}
           {view === "roster" && (

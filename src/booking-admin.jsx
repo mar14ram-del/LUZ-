@@ -111,9 +111,31 @@ export function PublishButton({ appointments, staff, services, settings, closedD
 }
 
 // =====================================================================
+// 待確認筆數
+// 給外面的按鈕顯示用。只查數量不抓資料，很輕。
+// =====================================================================
+
+export function usePendingRequestCount(intervalMs) {
+  const [count, setCount] = useState(0);
+  const load = useCallback(async () => {
+    const { count: c, error } = await supabase
+      .from("booking_requests")
+      .select("id", { count: "exact", head: true })
+      .eq("status", "pending");
+    if (!error) setCount(c || 0);
+  }, []);
+  useEffect(() => {
+    load();
+    const t = setInterval(load, intervalMs || 180000);
+    return () => clearInterval(t);
+  }, [load, intervalMs]);
+  return { count, refresh: load };
+}
+
+// =====================================================================
 // 預約申請收件匣
 // =====================================================================
-export function BookingInbox({ appointments, customers, staff, services, roster, onApprove, onCreateCustomer }) {
+export function BookingInbox({ appointments, customers, staff, services, roster, onApprove, onCreateCustomer, onHandled }) {
   const [requests, setRequests] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -255,6 +277,7 @@ export function BookingInbox({ appointments, customers, staff, services, roster,
     if (err) setError("已建立預約，但更新申請狀態失敗：" + err.message);
     setWorkingId("");
     load();
+    if (onHandled) onHandled();
   }
 
   async function reject(req) {
@@ -266,6 +289,7 @@ export function BookingInbox({ appointments, customers, staff, services, roster,
     if (err) setError("退回失敗：" + err.message);
     setWorkingId("");
     load();
+    if (onHandled) onHandled();
   }
 
   return (
@@ -285,7 +309,7 @@ export function BookingInbox({ appointments, customers, staff, services, roster,
 
       <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: 14 }}>
         <div style={{ fontFamily: "'Fraunces', serif", fontSize: 17, fontWeight: 600, display: "flex", alignItems: "center", gap: 7 }}>
-          <Inbox size={17} /> 預約申請
+          <Inbox size={17} /> 待確認預約
           {pendingCount > 0 && (
             <span style={{ background: BRASS, color: "white", borderRadius: 999, padding: "1px 8px", fontSize: 12, fontFamily: "'IBM Plex Mono', monospace" }}>
               {pendingCount}
