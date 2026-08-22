@@ -10,7 +10,7 @@
 // =====================================================================
 
 import React, { useState } from "react";
-import { Plus, Trash2, ChevronDown, ChevronRight, GripVertical } from "lucide-react";
+import { Plus, Trash2, ChevronDown, ChevronRight, GripVertical, ArrowUp, ArrowDown } from "lucide-react";
 
 export const SERVICE_KEY = "appointments:services";
 
@@ -302,6 +302,17 @@ export function ServiceCatalogEditor({ services, onChange }) {
   function setService(id, patch) {
     update(list.map((s) => (s.id === id ? { ...s, ...patch } : s)));
   }
+  /** 上移／下移一個服務項目，用來自訂記帳、預約表單裡的顯示順序 */
+  function moveService(id, dir) {
+    const i = list.findIndex((s) => s.id === id);
+    const j = i + dir;
+    if (i < 0 || j < 0 || j >= list.length) return;
+    const next = list.slice();
+    const tmp = next[i];
+    next[i] = next[j];
+    next[j] = tmp;
+    update(next);
+  }
   function setTier(svId, tierId, patch) {
     update(list.map((s) => s.id !== svId ? s : {
       ...s, tiers: s.tiers.map((t) => (t.id === tierId ? { ...t, ...patch } : t)),
@@ -339,8 +350,16 @@ export function ServiceCatalogEditor({ services, onChange }) {
     <div>
       <style>{`
         .sc-card { border: 1px solid ${PAPER_LINE}; border-radius: 10px; background: "#FFFDF8"; margin-bottom: 10px; overflow: hidden; }
-        .sc-head { display: flex; align-items: center; gap: 8px; padding: 11px 13px; cursor: pointer; background: #FFFDF8; }
+        .sc-head { display: flex; align-items: center; gap: 4px; padding: 8px 13px; background: #FFFDF8; }
         .sc-head:hover { background: ${BRASS_LIGHT}; }
+        .sc-reorder { display: flex; flex-direction: column; gap: 2px; margin-right: 4px; flex-shrink: 0; }
+        .sc-reorder-btn {
+          display: flex; align-items: center; justify-content: center; width: 22px; height: 18px;
+          border: 1px solid ${PAPER_LINE}; border-radius: 4px; background: #FFFDF8; color: ${MUTED}; cursor: pointer; padding: 0;
+        }
+        .sc-reorder-btn:hover:not(:disabled) { border-color: ${BRASS}; color: ${BRASS}; }
+        .sc-reorder-btn:disabled { opacity: 0.3; cursor: not-allowed; }
+        .sc-toggle { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; cursor: pointer; padding: 3px 0; }
         .sc-name { font-size: 14.5px; font-weight: 600; color: ${INK}; }
         .sc-sum { font-size: 12px; color: ${MUTED}; font-family: 'IBM Plex Mono', monospace; margin-left: auto; }
         .sc-body { padding: 4px 13px 14px; background: ${PAPER}; }
@@ -354,7 +373,11 @@ export function ServiceCatalogEditor({ services, onChange }) {
         }
       `}</style>
 
-      {list.map((sv) => {
+      <div className="field-hint" style={{ marginBottom: 10, lineHeight: 1.7 }}>
+        用每個項目左邊的上下箭頭調整排列順序，這個順序會決定記帳、預約表單裡分類的排列與預設值。
+      </div>
+
+      {list.map((sv, idx) => {
         const isOpen = open === sv.id;
         const ts = tiersOf(sv);
         const prices = ts.map((t) => Number(t.price) || 0);
@@ -364,12 +387,24 @@ export function ServiceCatalogEditor({ services, onChange }) {
               : fmtMoney(Math.min(...prices)) + "–" + fmtMoney(Math.max(...prices)));
         return (
           <div key={sv.id} className="sc-card">
-            <div className="sc-head" onClick={() => setOpen(isOpen ? "" : sv.id)}>
-              {isOpen ? <ChevronDown size={15} color={MUTED} /> : <ChevronRight size={15} color={MUTED} />}
-              <span className="sc-name">{sv.name}</span>
-              <span className="sc-sum">
-                {ts.length > 1 ? ts.length + " 種　" : ""}{summary}
-              </span>
+            <div className="sc-head">
+              <div className="sc-reorder">
+                <button type="button" className="sc-reorder-btn" disabled={idx === 0}
+                  onClick={() => moveService(sv.id, -1)} aria-label="上移" title="上移">
+                  <ArrowUp size={12} />
+                </button>
+                <button type="button" className="sc-reorder-btn" disabled={idx === list.length - 1}
+                  onClick={() => moveService(sv.id, 1)} aria-label="下移" title="下移">
+                  <ArrowDown size={12} />
+                </button>
+              </div>
+              <div className="sc-toggle" onClick={() => setOpen(isOpen ? "" : sv.id)}>
+                {isOpen ? <ChevronDown size={15} color={MUTED} /> : <ChevronRight size={15} color={MUTED} />}
+                <span className="sc-name">{sv.name}</span>
+                <span className="sc-sum">
+                  {ts.length > 1 ? ts.length + " 種　" : ""}{summary}
+                </span>
+              </div>
             </div>
 
             {isOpen && (
