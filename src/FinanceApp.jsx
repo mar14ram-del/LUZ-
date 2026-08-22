@@ -10,6 +10,9 @@ import {
 import { loadKey, saveKey } from "./storage";
 import PayrollLock from "./payroll-lock";
 import { STORES, storeName, BRAND } from "./stores";
+import {
+  SERVICE_KEY, normalizeServices, incomeCategories, priceChipsByCategory,
+} from "./services";
 
 const FONT_IMPORT = `@import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap');`;
 
@@ -26,7 +29,21 @@ const SAGE = "#4F6B4F";
 const SAGE_LIGHT = "#E3EADD";
 const MUTED = "#8A8072";
 
-const INCOME_CATEGORIES = ["剪髮", "染燙", "護髮", "頭皮護理", "產品銷售", "其他收入"];
+// 收入分類直接來自服務價目表（服務與設定裡改，這邊自動跟著變）。
+// 舊資料如果用到已刪除的分類（例如「染燙」），下面的 withLegacy 會補回來，
+// 避免那些記錄在選單裡找不到對應項目。
+const FALLBACK_INCOME = ["剪髮", "染燙", "護髮", "頭皮護理", "產品銷售", "其他收入"];
+
+function withLegacy(list, transactions) {
+  const set = new Set(list);
+  (transactions || []).forEach((t) => {
+    if (t.type === "income" && t.category && !set.has(t.category)) {
+      set.add(t.category);
+      list = [...list, t.category];
+    }
+  });
+  return list;
+}
 const EXPENSE_CATEGORIES = ["物料耗材", "房租", "水電瓦斯", "行銷廣告", "設備維修", "員工薪資", "其他支出"];
 const PAYMENT_METHODS = ["現金", "信用卡", "行動支付", "銀行轉帳"];
 
@@ -143,14 +160,56 @@ function ConfirmDelete({ onConfirm }) {
   );
 }
 
-function CategoryLineEditor({ rows, categories, type, materials, onChange }) {
+function CategoryLineEditor({ rows, categories, type, materials, priceChips, onChange }) {
   function updateRow(id, patch) {
     onChange(rows.map((r) => (r.id === id ? { ...r, ...patch } : r)));
+  }
+
+  /** 換分類時，自動帶入該分類最便宜的價格 */
+  function pickCategory(id, category) {
+    const entry = (priceChips || {})[category];
+    const lowest = entry && entry.chips.length
+      ? entry.chips.slice().sort((a, b) => a.price - b.price)[0]
+      : null;
+    onChange(rows.map((r) => (r.id === id
+      ? { ...r, category, amount: lowest ? String(lowest.price) : "", chipId: lowest ? lowest.id : "", addonIds: [] }
+      : r)));
+  }
+
+  /** 點價格選項 */
+  function pickChip(row, chip) {
+    const addons = (priceChips[row.category] || {}).addons || [];
+    const extra = (row.addonIds || []).reduce((t, aid) => {
+      const a = addons.find((x) => x.id === aid);
+      return t + (a ? a.price : 0);
+    }, 0);
+    updateRow(row.id, { chipId: chip.id, amount: String(chip.price + extra) });
+  }
+
+  /** 點加價項目（在現有金額上加減） */
+  function toggleAddon(row, addon) {
+    const on = (row.addonIds || []).includes(addon.id);
+    const nextIds = on
+      ? row.addonIds.filter((x) => x !== addon.id)
+      : [...(row.addonIds || []), addon.id];
+    const cur = parseFloat(row.amount) || 0;
+    updateRow(row.id, {
+      addonIds: nextIds,
+      amount: String(Math.max(0, cur + (on ? -addon.price : addon.price))),
+    });
   }
   function addRow() {
     const used = new Set(rows.map((r) => r.category));
     const next = categories.find((c) => !used.has(c)) || categories[0];
-    onChange([...rows, { id: uid(), category: next, amount: "", materialId: "", qty: 1 }]);
+    const entry = (priceChips || {})[next];
+    const lowest = entry && entry.chips.length
+      ? entry.chips.slice().sort((a, b) => a.price - b.price)[0]
+      : null;
+    onChange([...rows, {
+      id: uid(), category: next, materialId: "", qty: 1,
+      amount: lowest ? String(lowest.price) : "",
+      chipId: lowest ? lowest.id : "", addonIds: [],
+    }]);
   }
   function removeRow(id) {
     if (rows.length <= 1) return;
@@ -161,7 +220,7 @@ function CategoryLineEditor({ rows, categories, type, materials, onChange }) {
       {rows.map((r) => (
         <div key={r.id} style={{ display: "flex", flexDirection: "column", gap: 6, padding: 8, background: PAPER, borderRadius: 8 }}>
           <div style={{ display: "flex", gap: 6 }}>
-            <select className="ledger-input" style={{ flex: 1 }} value={r.category} onChange={(e) => updateRow(r.id, { category: e.target.value })}>
+            <select className="ledger-input" style={{ flex: 1 }} value={r.category} onChange={(e) => pickCategory(r.id, e.target.value)}>
               {categories.map((c) => <option key={c} value={c}>{c}</option>)}
             </select>
             <input className="ledger-input" style={{ width: 90 }} type="number" min="0" placeholder="金額" value={r.amount} onChange={(e) => updateRow(r.id, { amount: e.target.value })} />
@@ -169,6 +228,33 @@ function CategoryLineEditor({ rows, categories, type, materials, onChange }) {
               <button type="button" className="ledger-icon-btn" onClick={() => removeRow(r.id)} aria-label="移除這個分類"><X size={14} /></button>
             )}
           </div>
+          {type === "income" && (priceChips || {})[r.category] && (() => {
+            const entry = priceChips[r.category];
+            const showTiers = entry.chips.length > 1;
+            if (!showTiers && entry.addons.length === 0) return null;
+            return (
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
+                {showTiers && entry.chips.map((c) => (
+                  <button key={c.id} type="button"
+                    className={"pricechip" + (r.chipId === c.id ? " pricechip-on" : "")}
+                    onClick={() => pickChip(r, c)}>
+                    {c.label}　{fmtMoney(c.price)}{c.from ? "起" : ""}
+                  </button>
+                ))}
+                {entry.addons.map((a) => {
+                  const on = (r.addonIds || []).includes(a.id);
+                  return (
+                    <button key={a.id} type="button"
+                      className={"pricechip pricechip-add" + (on ? " pricechip-on" : "")}
+                      onClick={() => toggleAddon(r, a)}>
+                      {on ? "✓ " : "+ "}{a.label} {fmtMoney(a.price)}
+                    </button>
+                  );
+                })}
+              </div>
+            );
+          })()}
+
           {type === "income" && r.category === "產品銷售" && materials.length > 0 && (
             <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
               <select className="ledger-input" style={{ flex: 1 }} value={r.materialId} onChange={(e) => updateRow(r.id, { materialId: e.target.value })}>
@@ -189,17 +275,17 @@ function CategoryLineEditor({ rows, categories, type, materials, onChange }) {
   );
 }
 
-function TxForm({ onAdd, staff, materials, defaultStoreId }) {
+function TxForm({ onAdd, staff, materials, defaultStoreId, incomeCats, priceChips }) {
   const [type, setType] = useState("income");
   const [date, setDate] = useState(todayStr());
   const [storeId, setStoreId] = useState(defaultStoreId || STORES[0].id);
-  const [rows, setRows] = useState([{ id: uid(), category: INCOME_CATEGORIES[0], amount: "", materialId: "", qty: 1 }]);
+  const [rows, setRows] = useState([{ id: uid(), category: (incomeCats && incomeCats[0]) || FALLBACK_INCOME[0], amount: "", materialId: "", qty: 1 }]);
   const [note, setNote] = useState("");
   const [payment, setPayment] = useState("現金");
   const [staffId, setStaffId] = useState("");
   const [error, setError] = useState("");
 
-  const categories = type === "income" ? INCOME_CATEGORIES : EXPENSE_CATEGORIES;
+  const categories = type === "income" ? (incomeCats && incomeCats.length ? incomeCats : FALLBACK_INCOME) : EXPENSE_CATEGORIES;
 
   useEffect(() => {
     setRows([{ id: uid(), category: categories[0], amount: "", materialId: "", qty: 1 }]);
@@ -264,7 +350,7 @@ function TxForm({ onAdd, staff, materials, defaultStoreId }) {
 
       <div className="field-label">
         分類與金額（可以加多個，例如剪髮同時順便買產品）
-        <CategoryLineEditor rows={rows} categories={categories} type={type} materials={materials} onChange={setRows} />
+        <CategoryLineEditor rows={rows} categories={categories} type={type} materials={materials} priceChips={priceChips} onChange={setRows} />
       </div>
 
       {type === "income" && staff.length > 0 && (
@@ -330,7 +416,7 @@ function GroupRow({ g, staff, onDelete }) {
   );
 }
 
-function LedgerView({ transactions, staff, materials, defaultStoreId, onAdd, onDelete }) {
+function LedgerView({ transactions, staff, materials, defaultStoreId, incomeCats, priceChips, onAdd, onDelete }) {
   const [filterType, setFilterType] = useState("all");
   const [filterMonth, setFilterMonth] = useState(monthKey(todayStr()));
 
@@ -351,7 +437,7 @@ function LedgerView({ transactions, staff, materials, defaultStoreId, onAdd, onD
 
   return (
     <div style={{ display: "grid", gridTemplateColumns: "340px 1fr", gap: 20 }} className="responsive-grid">
-      <TxForm onAdd={onAdd} staff={staff} materials={materials} defaultStoreId={defaultStoreId} />
+      <TxForm onAdd={onAdd} staff={staff} materials={materials} defaultStoreId={defaultStoreId} incomeCats={incomeCats} priceChips={priceChips} />
 
       <div style={{ display: "flex", flexDirection: "column", gap: 12, minWidth: 0 }}>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
@@ -1091,6 +1177,7 @@ export default function FinanceApp() {
   const [loaded, setLoaded] = useState(false);
   const [tab, setTab] = useState("dashboard");
   const [storeFilter, setStoreFilter] = useState(ALL_STORES);
+  const [services, setServices] = useState(() => normalizeServices(null));
   const [transactions, setTransactions] = useState([]);
   const [staff, setStaff] = useState([]);
   const [closings, setClosings] = useState([]);
@@ -1101,13 +1188,15 @@ export default function FinanceApp() {
 
   useEffect(() => {
     (async () => {
-      const [tx, st, cl, ai, dd, tpl, mat] = await Promise.all([
+      const [tx, st, cl, ai, dd, tpl, mat, svc] = await Promise.all([
         loadKey(TX_KEY, []), loadKey(STAFF_KEY, []), loadKey(CLOSING_KEY, []),
         loadKey(ASSISTANT_ITEMS_KEY, []), loadKey(DESIGNER_DEDUCTIONS_KEY, []),
         loadKey(ITEM_TEMPLATES_KEY, DEFAULT_ASSISTANT_TEMPLATES), loadKey(MATERIALS_KEY, []),
+        loadKey(SERVICE_KEY, null),
       ]);
       setTransactions(tx); setStaff(st); setClosings(cl);
       setAssistantItems(ai); setDesignerDeductions(dd); setTemplates(tpl); setMaterials(mat);
+      setServices(normalizeServices(svc));
       setLoaded(true);
     })();
   }, []);
@@ -1122,6 +1211,12 @@ export default function FinanceApp() {
 
   const addTx = useCallback((tx) => setTransactions((prev) => [tx, ...prev]), []);
   const deleteTx = useCallback((id) => setTransactions((prev) => prev.filter((t) => t.id !== id)), []);
+  const incomeCats = useMemo(
+    () => withLegacy(incomeCategories(services), transactions),
+    [services, transactions]
+  );
+  const priceChips = useMemo(() => priceChipsByCategory(services), [services]);
+
   const visibleTx = useMemo(() => filterByStore(transactions, storeFilter), [transactions, storeFilter]);
   const activeStoreId = storeFilter === ALL_STORES || storeFilter === NO_STORE ? STORES[0].id : storeFilter;
 
@@ -1213,6 +1308,13 @@ export default function FinanceApp() {
           border-radius: 6px; border: 1px solid transparent; background: transparent; color: ${MUTED}; cursor: pointer;
         }
         .ledger-icon-btn:hover { background: ${PAPER}; color: ${INK}; }
+        .pricechip {
+          font-family: 'IBM Plex Sans', sans-serif; font-size: 11.5px; padding: 5px 10px; border-radius: 6px;
+          border: 1px solid ${PAPER_LINE}; background: #FFFDF8; color: ${MUTED}; cursor: pointer; white-space: nowrap;
+        }
+        .pricechip:hover { border-color: ${BRASS}; color: ${INK}; }
+        .pricechip-on { background: ${BRASS_LIGHT}; border-color: ${BRASS}; color: ${BRASS}; font-weight: 600; }
+        .pricechip-add { border-style: dashed; }
         .toggle-pill {
           flex: 1; display: inline-flex; align-items: center; justify-content: center; gap: 6px;
           font-family: 'IBM Plex Sans', sans-serif; font-size: 13px; font-weight: 500; padding: 8px 0;
@@ -1277,7 +1379,7 @@ export default function FinanceApp() {
         </div>
 
         {tab === "dashboard" && <Dashboard transactions={visibleTx} allTransactions={transactions} staff={staff} storeFilter={storeFilter} />}
-        {tab === "ledger" && <LedgerView transactions={visibleTx} staff={staff} materials={materials} defaultStoreId={activeStoreId} onAdd={addTxGroup} onDelete={deleteTxGroup} />}
+        {tab === "ledger" && <LedgerView transactions={visibleTx} staff={staff} materials={materials} defaultStoreId={activeStoreId} incomeCats={incomeCats} priceChips={priceChips} onAdd={addTxGroup} onDelete={deleteTxGroup} />}
         {tab === "materials" && <MaterialsView materials={materials} onAdd={addMaterial} onUpdate={updateMaterial} onDelete={deleteMaterial} />}
         {/* 薪資刻意用完整 transactions，不受分店篩選影響——設計師的抽成是兩店合併計算 */}
         {tab === "staff" && (
