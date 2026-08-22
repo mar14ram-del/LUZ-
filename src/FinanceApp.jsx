@@ -119,6 +119,23 @@ function last6Months(mk) {
   return arr;
 }
 
+/**
+ * 建立記帳表單的一列預設資料：選了某個分類之後，
+ * 自動代入該分類價目裡最便宜的分級（同一顆邏輯用在
+ * 表單一開始建立、收入/支出切換、以及手動改分類時）。
+ * 分級是不是「起價」不影響這裡的自動選擇，起價只是顯示上多一個「起」字。
+ */
+function defaultRowFor(category, priceChips) {
+  const entry = (priceChips || {})[category];
+  const lowest = entry && entry.chips.length
+    ? entry.chips.slice().sort((a, b) => a.price - b.price)[0]
+    : null;
+  return {
+    id: uid(), category, materialId: "", qty: 1,
+    amount: lowest ? String(lowest.price) : "",
+    chipId: lowest ? lowest.id : "", addonIds: [],
+  };
+}
 
 function StatCard({ label, value, tone, icon }) {
   const toneColor = tone === "income" ? SAGE : tone === "expense" ? WINE : INK;
@@ -167,13 +184,7 @@ function CategoryLineEditor({ rows, categories, type, materials, priceChips, onC
 
   /** 換分類時，自動帶入該分類最便宜的價格 */
   function pickCategory(id, category) {
-    const entry = (priceChips || {})[category];
-    const lowest = entry && entry.chips.length
-      ? entry.chips.slice().sort((a, b) => a.price - b.price)[0]
-      : null;
-    onChange(rows.map((r) => (r.id === id
-      ? { ...r, category, amount: lowest ? String(lowest.price) : "", chipId: lowest ? lowest.id : "", addonIds: [] }
-      : r)));
+    onChange(rows.map((r) => (r.id === id ? { ...r, ...defaultRowFor(category, priceChips), id: r.id } : r)));
   }
 
   /** 點價格選項 */
@@ -201,15 +212,7 @@ function CategoryLineEditor({ rows, categories, type, materials, priceChips, onC
   function addRow() {
     const used = new Set(rows.map((r) => r.category));
     const next = categories.find((c) => !used.has(c)) || categories[0];
-    const entry = (priceChips || {})[next];
-    const lowest = entry && entry.chips.length
-      ? entry.chips.slice().sort((a, b) => a.price - b.price)[0]
-      : null;
-    onChange([...rows, {
-      id: uid(), category: next, materialId: "", qty: 1,
-      amount: lowest ? String(lowest.price) : "",
-      chipId: lowest ? lowest.id : "", addonIds: [],
-    }]);
+    onChange([...rows, defaultRowFor(next, priceChips)]);
   }
   function removeRow(id) {
     if (rows.length <= 1) return;
@@ -290,7 +293,9 @@ function TxForm({ onAdd, staff, materials, defaultStoreId, incomeCats, priceChip
   const [type, setType] = useState("income");
   const [date, setDate] = useState(todayStr());
   const [storeId, setStoreId] = useState(defaultStoreId || STORES[0].id);
-  const [rows, setRows] = useState([{ id: uid(), category: (incomeCats && incomeCats[0]) || FALLBACK_INCOME[0], amount: "", materialId: "", qty: 1 }]);
+  const [rows, setRows] = useState(() => [
+    defaultRowFor((incomeCats && incomeCats[0]) || FALLBACK_INCOME[0], priceChips),
+  ]);
   const [note, setNote] = useState("");
   const [payment, setPayment] = useState("現金");
   const [staffId, setStaffId] = useState("");
@@ -299,7 +304,7 @@ function TxForm({ onAdd, staff, materials, defaultStoreId, incomeCats, priceChip
   const categories = type === "income" ? (incomeCats && incomeCats.length ? incomeCats : FALLBACK_INCOME) : EXPENSE_CATEGORIES;
 
   useEffect(() => {
-    setRows([{ id: uid(), category: categories[0], amount: "", materialId: "", qty: 1 }]);
+    setRows([defaultRowFor(categories[0], type === "income" ? priceChips : null)]);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [type]);
 
@@ -320,7 +325,7 @@ function TxForm({ onAdd, staff, materials, defaultStoreId, incomeCats, priceChip
       type, date, note: note.trim(), paymentMethod: payment, storeId,
       staffId: type === "income" ? (staffId || null) : null,
     });
-    setRows([{ id: uid(), category: categories[0], amount: "", materialId: "", qty: 1 }]);
+    setRows([defaultRowFor(categories[0], type === "income" ? priceChips : null)]);
     setNote("");
     setError("");
   }
