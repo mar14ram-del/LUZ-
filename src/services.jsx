@@ -82,6 +82,58 @@ export const DEFAULT_SERVICES = [
 ];
 
 /* =====================================================================
+   價目板 —— 後台一鍵套用，只動剪髮／染髮／燙髮，其他服務不碰
+   ===================================================================== */
+
+export const PRICE_BOARD = {
+  "剪髮": {
+    tiers: [
+      { label: "方案一", price: 800, durationMin: 60 },
+      { label: "方案二", price: 1000, durationMin: 60 },
+      { label: "方案三", price: 2000, durationMin: 75 },
+    ],
+    addons: [],
+  },
+  "染髮": {
+    tiers: [
+      { label: "短", price: 2300, durationMin: 105 },
+      { label: "中長", price: 3100, durationMin: 120 },
+      { label: "長", price: 3500, durationMin: 135 },
+      { label: "特長", price: 3800, durationMin: 150 },
+      { label: "去色／漂髮", price: 2200, durationMin: 150, from: true },
+      { label: "接髮", price: 3000, durationMin: 180, from: true },
+    ],
+    addons: [],
+  },
+  "燙髮": {
+    tiers: [
+      { label: "短", price: 2700, durationMin: 120 },
+      { label: "中長", price: 3400, durationMin: 150 },
+      { label: "長", price: 4100, durationMin: 165 },
+      { label: "特長", price: 4600, durationMin: 180 },
+    ],
+    addons: [{ label: "上直下卷", price: 1000, durationMin: 30 }],
+  },
+};
+
+/**
+ * 把價目板套進現有服務清單。
+ * 名稱對得上的就換掉分級，對不上的完全不動，缺的就新增。
+ */
+export function applyPriceBoard(services) {
+  const list = [...(services || [])];
+  Object.keys(PRICE_BOARD).forEach((name) => {
+    const board = PRICE_BOARD[name];
+    const tiers = board.tiers.map((t) => ({ ...t, id: uid() }));
+    const addons = board.addons.map((a) => ({ ...a, id: uid() }));
+    const i = list.findIndex((s) => (s.name || "").trim() === name);
+    if (i >= 0) list[i] = { ...list[i], tiers, addons };
+    else list.push({ id: uid(), name, tiers, addons });
+  });
+  return list;
+}
+
+/* =====================================================================
    資料正規化 —— 把舊格式（一個服務一個價）自動升級成分級格式
    ===================================================================== */
 
@@ -234,6 +286,7 @@ export function incomeCategories(services) {
 
 export function ServiceCatalogEditor({ services, onChange }) {
   const [open, setOpen] = useState("");
+  const [confirmBoard, setConfirmBoard] = useState(false);
   const list = services || [];
 
   function update(next) { onChange(next); }
@@ -385,9 +438,37 @@ export function ServiceCatalogEditor({ services, onChange }) {
         );
       })}
 
-      <button type="button" className="ledger-btn" onClick={addService}>
-        <Plus size={14} /> 新增服務
-      </button>
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+        <button type="button" className="ledger-btn" onClick={addService}>
+          <Plus size={14} /> 新增服務
+        </button>
+        {!confirmBoard ? (
+          <button type="button" className="ledger-btn" onClick={() => setConfirmBoard(true)}>
+            套用店內價目板
+          </button>
+        ) : (
+          <>
+            <button type="button" className="ledger-btn ledger-btn-primary"
+              onClick={() => { update(applyPriceBoard(list)); setConfirmBoard(false); }}>
+              確定套用
+            </button>
+            <button type="button" className="ledger-btn" onClick={() => setConfirmBoard(false)}>
+              取消
+            </button>
+          </>
+        )}
+      </div>
+
+      {confirmBoard && (
+        <div style={{
+          marginTop: 10, padding: "11px 13px", borderRadius: 8,
+          background: BRASS_LIGHT, color: BRASS, fontSize: 12.5, lineHeight: 1.7,
+        }}>
+          會把 <strong>剪髮</strong>（800／1000／2000）、<strong>染髮</strong>（短～特長、去色、接髮）、
+          <strong>燙髮</strong>（短～特長＋上直下卷加價）換成價目板的分級。
+          這三個以外的服務完全不動。時間是預估值，套用後記得改成實際的。
+        </div>
+      )}
 
       <div className="field-hint" style={{ marginTop: 10, lineHeight: 1.7 }}>
         這份價目表同時用於預約表單、公開預約頁與財務記帳的金額快選。

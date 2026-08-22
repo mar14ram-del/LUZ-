@@ -186,7 +186,7 @@ function CategoryLineEditor({ rows, categories, type, materials, priceChips, onC
     updateRow(row.id, { chipId: chip.id, amount: String(chip.price + extra) });
   }
 
-  /** 點加價項目（在現有金額上加減） */
+  /** 點加價項目（在現有金額上加減，不影響已選的價格分級） */
   function toggleAddon(row, addon) {
     const on = (row.addonIds || []).includes(addon.id);
     const nextIds = on
@@ -219,41 +219,52 @@ function CategoryLineEditor({ rows, categories, type, materials, priceChips, onC
     <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
       {rows.map((r) => (
         <div key={r.id} style={{ display: "flex", flexDirection: "column", gap: 6, padding: 8, background: PAPER, borderRadius: 8 }}>
-          <div style={{ display: "flex", gap: 6 }}>
-            <select className="ledger-input" style={{ flex: 1 }} value={r.category} onChange={(e) => pickCategory(r.id, e.target.value)}>
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+            <select className="ledger-input" style={{ flex: "2 1 110px", minWidth: 0 }} value={r.category}
+              onChange={(e) => pickCategory(r.id, e.target.value)}>
               {categories.map((c) => <option key={c} value={c}>{c}</option>)}
             </select>
-            <input className="ledger-input" style={{ width: 90 }} type="number" min="0" placeholder="金額" value={r.amount} onChange={(e) => updateRow(r.id, { amount: e.target.value })} />
+
+            {(() => {
+              const entry = (priceChips || {})[r.category];
+              if (!entry || entry.chips.length <= 1) return null;
+              return (
+                <select className="ledger-input" style={{ flex: "2 1 120px", minWidth: 0 }}
+                  value={r.chipId || ""}
+                  onChange={(e) => {
+                    const c = entry.chips.find((x) => x.id === e.target.value);
+                    if (c) pickChip(r, c); else updateRow(r.id, { chipId: "" });
+                  }}>
+                  <option value="">自訂金額</option>
+                  {entry.chips.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.label}　{fmtMoney(c.price)}{c.from ? " 起" : ""}
+                    </option>
+                  ))}
+                </select>
+              );
+            })()}
+
+            <input className="ledger-input" style={{ flex: "0 0 86px" }} type="number" min="0" placeholder="金額"
+              value={r.amount} onChange={(e) => updateRow(r.id, { amount: e.target.value, chipId: "" })} />
             {rows.length > 1 && (
               <button type="button" className="ledger-icon-btn" onClick={() => removeRow(r.id)} aria-label="移除這個分類"><X size={14} /></button>
             )}
           </div>
-          {type === "income" && (priceChips || {})[r.category] && (() => {
-            const entry = priceChips[r.category];
-            const showTiers = entry.chips.length > 1;
-            if (!showTiers && entry.addons.length === 0) return null;
-            return (
-              <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
-                {showTiers && entry.chips.map((c) => (
-                  <button key={c.id} type="button"
-                    className={"pricechip" + (r.chipId === c.id ? " pricechip-on" : "")}
-                    onClick={() => pickChip(r, c)}>
-                    {c.label}　{fmtMoney(c.price)}{c.from ? "起" : ""}
+          {type === "income" && (priceChips || {})[r.category] && (priceChips[r.category].addons || []).length > 0 && (
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
+              {priceChips[r.category].addons.map((a) => {
+                const on = (r.addonIds || []).includes(a.id);
+                return (
+                  <button key={a.id} type="button"
+                    className={"pricechip pricechip-add" + (on ? " pricechip-on" : "")}
+                    onClick={() => toggleAddon(r, a)}>
+                    {on ? "✓ " : "+ "}{a.label} {fmtMoney(a.price)}
                   </button>
-                ))}
-                {entry.addons.map((a) => {
-                  const on = (r.addonIds || []).includes(a.id);
-                  return (
-                    <button key={a.id} type="button"
-                      className={"pricechip pricechip-add" + (on ? " pricechip-on" : "")}
-                      onClick={() => toggleAddon(r, a)}>
-                      {on ? "✓ " : "+ "}{a.label} {fmtMoney(a.price)}
-                    </button>
-                  );
-                })}
-              </div>
-            );
-          })()}
+                );
+              })}
+            </div>
+          )}
 
           {type === "income" && r.category === "產品銷售" && materials.length > 0 && (
             <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
