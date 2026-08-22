@@ -5,7 +5,12 @@ import {
   ExternalLink, Phone, Save, CircleAlert, Inbox, Users, Store,
 } from "lucide-react";
 import { STORES, getStore, storeName, BRAND } from "./stores";
-import { RosterEditor, storeOfStaffOn, normalizeRoster, rateOf, totalFor, ROSTER_KEY } from "./roster";
+import { RosterEditor, storeOfStaffOn, normalizeRoster, ROSTER_KEY } from "./roster";
+import {
+  SERVICE_KEY as SVC_KEY, normalizeServices, DEFAULT_SERVICES as SVC_DEFAULTS,
+  tiersOf, addonsOf, hasTiers, tierById, defaultTierId,
+  effectiveTier, totalOfPicks, ServiceCatalogEditor,
+} from "./services";
 import { BookingInbox, usePendingRequestCount } from "./booking-admin";
 import { useAutoPublish, SyncIndicator } from "./booking-sync";
 
@@ -24,7 +29,6 @@ const SAGE_LIGHT = "#E3EADD";
 const MUTED = "#8A8072";
 
 const APPT_KEY = "appointments:list";
-const SERVICE_KEY = "appointments:services";
 const SETTINGS_KEY = "appointments:settings";
 const CUSTOMER_KEY = "customers:list";
 const STAFF_KEY = "finance:staff";
@@ -42,14 +46,9 @@ const STATUS = {
 const STATUS_ORDER = ["pending", "confirmed", "arrived", "done", "noshow", "cancelled"];
 const LIVE_STATUSES = ["pending", "confirmed", "arrived", "done"];
 
-const DEFAULT_SERVICES = [
-  { id: "sv-cut", name: "剪髮", durationMin: 60, price: 800 },
-  { id: "sv-wash-cut", name: "洗+剪", durationMin: 75, price: 950 },
-  { id: "sv-color", name: "染髮", durationMin: 120, price: 2800 },
-  { id: "sv-perm", name: "燙髮", durationMin: 150, price: 3200 },
-  { id: "sv-treat", name: "護髮", durationMin: 45, price: 1200 },
-  { id: "sv-scalp", name: "頭皮護理", durationMin: 60, price: 1500 },
-];
+
+const DEFAULT_SERVICES = SVC_DEFAULTS;
+const SERVICE_KEY = SVC_KEY;
 
 const DEFAULT_SETTINGS = {
   openTime: "10:00",
@@ -399,40 +398,67 @@ function AppointmentForm({ appt, isNew, customers, staff, services, settings, ro
     setForm((f) => ({ ...f, [key]: value }));
   }
 
+  /** 重算一組已選項目的總時間與金額 */
+  function recalc(f, picks, sid) {
+    const t = totalOfPicks(normalizeRoster(roster), sid !== undefined ? sid : f.staffId, picks, services);
+    return {
+      ...f,
+      services: picks,
+      durationMin: f.durationEdited ? f.durationMin : (t.durationMin || f.durationMin),
+      price: t.price,
+    };
+  }
+
+  /** 把一筆已選項目變成顯示用的物件 */
+  function decorate(pick, sid) {
+    const sv = services.find((x) => x.id === pick.serviceId);
+    if (!sv) return pick;
+    const e = effectiveTier(normalizeRoster(roster), sid, sv, pick.tierId);
+    const addonLabels = (pick.addonIds || [])
+      .map((aid) => (addonsOf(sv).find((a) => a.id === aid) || {}).label)
+      .filter(Boolean);
+    const parts = [e.label, ...addonLabels].filter(Boolean);
+    return {
+      ...pick,
+      id: sv.id,
+      name: sv.name + (parts.length ? "（" + parts.join("、") + "）" : ""),
+      durationMin: e.durationMin,
+      price: e.price,
+    };
+  }
+
+  function rebuild(f, picks, sid) {
+    const who = sid !== undefined ? sid : f.staffId;
+    const decorated = picks.map((p) => decorate(p, who));
+    return recalc(f, decorated, who);
+  }
+
   function toggleService(sv) {
     setForm((f) => {
-      const has = f.services.some((x) => x.id === sv.id);
-      const r = rateOf(normalizeRoster(roster), f.staffId, sv);
-      const next = has
-        ? f.services.filter((x) => x.id !== sv.id)
-        : [...f.services, { id: sv.id, name: sv.name, durationMin: r.durationMin, price: r.price }];
-      const sumDur = next.reduce((t, x) => t + (x.durationMin || 0), 0);
-      const sumPrice = next.reduce((t, x) => t + (x.price || 0), 0);
-      return {
-        ...f,
-        services: next,
-        durationMin: f.durationEdited ? f.durationMin : (sumDur || f.durationMin),
-        price: sumPrice,
-      };
+      const has = f.services.some((x) => x.serviceId === sv.id);
+      const picks = has
+        ? f.services.filter((x) => x.serviceId !== sv.id)
+        : [...f.services, { serviceId: sv.id, tierId: defaultTierId(sv), addonIds: [] }];
+      return rebuild(f, picks);
     });
   }
 
-  /** 換設計師時，已選的服務要換成他的價目 */
+  function setTier(svId, tierId) {
+    setForm((f) => rebuild(f, f.services.map((x) => (x.serviceId === svId ? { ...x, tierId } : x))));
+  }
+
+  function toggleAddon(svId, addonId) {
+    setForm((f) => rebuild(f, f.services.map((x) => {
+      if (x.serviceId !== svId) return x;
+      const on = (x.addonIds || []).includes(addonId);
+      return { ...x, addonIds: on ? x.addonIds.filter((a) => a !== addonId) : [...(x.addonIds || []), addonId] };
+    })));
+  }
+
+  /** 換設計師時，已選項目要換成他的價目 */
   function applyStaffRates(f, sid) {
     if (!f.services || f.services.length === 0) return f;
-    const r = normalizeRoster(roster);
-    const next = f.services.map((x) => {
-      const sv = (services || []).find((y) => y.id === x.id);
-      if (!sv) return x;
-      const rr = rateOf(r, sid, sv);
-      return { ...x, durationMin: rr.durationMin, price: rr.price };
-    });
-    return {
-      ...f,
-      services: next,
-      durationMin: f.durationEdited ? f.durationMin : next.reduce((t, x) => t + (x.durationMin || 0), 0),
-      price: next.reduce((t, x) => t + (x.price || 0), 0),
-    };
+    return rebuild(f, f.services, sid);
   }
 
   const customer = customerMap[form.customerId];
@@ -604,21 +630,54 @@ function AppointmentForm({ appt, isNew, customers, staff, services, settings, ro
 
       <div>
         <div className="field-label" style={{ marginBottom: 6 }}>服務項目</div>
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-          {services.length === 0 ? (
-            <div style={{ fontSize: 13, color: MUTED }}>還沒有服務項目，先到右上角「服務與設定」建立。</div>
-          ) : services.map((sv) => {
-            const on = form.services.some((x) => x.id === sv.id);
-            return (
-              <button key={sv.id} type="button" className={"chip" + (on ? " chip-on" : "")} onClick={() => toggleService(sv)}>
-                {on ? "✓ " : ""}{sv.name}{" "}
-                <span style={{ opacity: 0.7 }}>
-                  {rateOf(normalizeRoster(roster), form.staffId, sv).durationMin}分
-                </span>
-              </button>
-            );
-          })}
-        </div>
+        {services.length === 0 ? (
+          <div style={{ fontSize: 13, color: MUTED }}>還沒有服務項目，先到右上角「服務與設定」建立。</div>
+        ) : (
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            {services.map((sv) => {
+              const pick = form.services.find((x) => x.serviceId === sv.id);
+              const on = !!pick;
+              const e = on ? effectiveTier(normalizeRoster(roster), form.staffId, sv, pick.tierId) : null;
+              return (
+                <div key={sv.id}>
+                  <button type="button" className={"chip" + (on ? " chip-on" : "")} onClick={() => toggleService(sv)}>
+                    {on ? "✓ " : ""}{sv.name}
+                    {on && <span style={{ opacity: 0.75 }}>　{e.durationMin}分　{fmtMoney(e.price)}</span>}
+                  </button>
+
+                  {on && hasTiers(sv) && (
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 5, marginTop: 6, paddingLeft: 4 }}>
+                      {tiersOf(sv).map((t) => {
+                        const sel = pick.tierId === t.id;
+                        const te = effectiveTier(normalizeRoster(roster), form.staffId, sv, t.id);
+                        return (
+                          <button key={t.id} type="button" className={"subchip" + (sel ? " subchip-on" : "")}
+                            onClick={() => setTier(sv.id, t.id)}>
+                            {t.label || "標準"}　{fmtMoney(te.price)}{t.from ? " 起" : ""}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+
+                  {on && addonsOf(sv).length > 0 && (
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 5, marginTop: 5, paddingLeft: 4 }}>
+                      {addonsOf(sv).map((a) => {
+                        const sel = (pick.addonIds || []).includes(a.id);
+                        return (
+                          <button key={a.id} type="button" className={"subchip subchip-add" + (sel ? " subchip-on" : "")}
+                            onClick={() => toggleAddon(sv.id, a.id)}>
+                            {sel ? "✓ " : "+ "}{a.label} {fmtMoney(a.price)}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
       </div>
 
       <div className="form-grid-2">
@@ -683,25 +742,7 @@ function AppointmentForm({ appt, isNew, customers, staff, services, settings, ro
 function ServiceSettings({ services, settings, onSaveServices, onSaveSettings }) {
   const [list, setList] = useState(services);
   const [cfg, setCfg] = useState(settings);
-  const [draft, setDraft] = useState({ name: "", durationMin: 60, price: 0 });
 
-  function addService() {
-    if (!draft.name.trim()) return;
-    const next = [...list, { id: uid(), name: draft.name.trim(), durationMin: parseInt(draft.durationMin, 10) || 60, price: parseFloat(draft.price) || 0 }];
-    setList(next);
-    onSaveServices(next);
-    setDraft({ name: "", durationMin: 60, price: 0 });
-  }
-  function updateService(id, key, value) {
-    const next = list.map((s) => (s.id === id ? { ...s, [key]: key === "name" ? value : (parseFloat(value) || 0) } : s));
-    setList(next);
-    onSaveServices(next);
-  }
-  function removeService(id) {
-    const next = list.filter((s) => s.id !== id);
-    setList(next);
-    onSaveServices(next);
-  }
   function setCfgKey(key, value) {
     const next = { ...cfg, [key]: value };
     setCfg(next);
@@ -711,27 +752,8 @@ function ServiceSettings({ services, settings, onSaveServices, onSaveSettings })
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
       <div>
-        <div className="sub-head">服務項目</div>
-        <div className="sv-table">
-          <div className="sv-row sv-head">
-            <span>名稱</span><span>時長(分)</span><span>價格</span><span />
-          </div>
-          {list.map((s) => (
-            <div key={s.id} className="sv-row">
-              <input className="ledger-input" value={s.name} onChange={(e) => updateService(s.id, "name", e.target.value)} />
-              <input type="number" className="ledger-input" value={s.durationMin} onChange={(e) => updateService(s.id, "durationMin", e.target.value)} />
-              <input type="number" className="ledger-input" value={s.price} onChange={(e) => updateService(s.id, "price", e.target.value)} />
-              <ConfirmDelete onConfirm={() => removeService(s.id)} label="刪除項目" />
-            </div>
-          ))}
-          <div className="sv-row">
-            <input className="ledger-input" placeholder="新服務名稱" value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} />
-            <input type="number" className="ledger-input" value={draft.durationMin} onChange={(e) => setDraft({ ...draft, durationMin: e.target.value })} />
-            <input type="number" className="ledger-input" value={draft.price} onChange={(e) => setDraft({ ...draft, price: e.target.value })} />
-            <button type="button" className="ledger-icon-btn" onClick={addService} title="新增服務"><Plus size={16} /></button>
-          </div>
-        </div>
-        <div className="field-hint">選了服務會自動帶入時長與金額，之後在預約表單裡還能手動微調。</div>
+        <div className="sub-head">服務項目與價目</div>
+        <ServiceCatalogEditor services={list} onChange={(next) => { setList(next); onSaveServices(next); }} />
       </div>
 
       <div>
@@ -1076,7 +1098,7 @@ function ListView({ appts, customerMap, staffMap, onOpen }) {
 export default function SalonAppointmentApp() {
   const [loaded, setLoaded] = useState(false);
   const [appts, setAppts] = useState([]);
-  const [services, setServices] = useState(DEFAULT_SERVICES);
+  const [services, setServices] = useState(() => normalizeServices(null));
   const [settings, setSettings] = useState(DEFAULT_SETTINGS);
   const [customers, setCustomers] = useState([]);
   const [staff, setStaff] = useState([]);
@@ -1104,7 +1126,7 @@ export default function SalonAppointmentApp() {
         loadKey(ROSTER_KEY, null),
       ]);
       setAppts(a);
-      if (sv) setServices(sv);
+      setServices(normalizeServices(sv));
       // 店名一律以 stores.jsx 的 BRAND 為準，忽略資料庫裡的舊值
       if (cfg) setSettings({ ...DEFAULT_SETTINGS, ...cfg, salonName: BRAND });
       setCustomers(cs);
@@ -1290,6 +1312,13 @@ export default function SalonAppointmentApp() {
           border: 1px solid ${PAPER_LINE}; background: #FFFDF8; color: ${MUTED}; cursor: pointer; white-space: nowrap;
         }
         .chip-on { background: ${INK}; color: ${PAPER}; border-color: ${INK}; }
+        .subchip {
+          font-family: 'IBM Plex Sans', sans-serif; font-size: 11.5px; padding: 5px 10px; border-radius: 6px;
+          border: 1px solid ${PAPER_LINE}; background: #FFFDF8; color: ${MUTED}; cursor: pointer; white-space: nowrap;
+        }
+        .subchip:hover { border-color: ${BRASS}; color: ${INK}; }
+        .subchip-on { background: ${BRASS_LIGHT}; border-color: ${BRASS}; color: ${BRASS}; font-weight: 600; }
+        .subchip-add { border-style: dashed; }
         .status-pill { display: inline-flex; align-items: center; padding: 3px 8px; border-radius: 999px; font-weight: 600; white-space: nowrap; }
         .form-grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 0 14px; }
         .avatar {

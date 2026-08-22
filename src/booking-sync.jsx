@@ -99,7 +99,13 @@ export async function publishConfig({ staff, services, settings, roster }) {
       openMin: toMin(s.openTime), closeMin: toMin(s.closeTime),
     })),
     services: (services || []).map((s) => ({
-      id: s.id, name: s.name, durationMin: s.durationMin, price: s.price,
+      id: s.id, name: s.name,
+      tiers: (s.tiers || []).map((t) => ({
+        id: t.id, label: t.label || "", price: t.price, durationMin: t.durationMin, from: !!t.from,
+      })),
+      addons: (s.addons || []).map((a) => ({
+        id: a.id, label: a.label, price: a.price, durationMin: a.durationMin,
+      })),
     })),
     designers: publicProfiles(r, designers),
   };
@@ -165,7 +171,7 @@ function daySignatures(appointments) {
 function configSignature({ staff, services, settings, roster }) {
   return JSON.stringify([
     (staff || []).filter(isDesigner).map((s) => s.id + ":" + s.name).sort(),
-    (services || []).map((s) => s.id + ":" + s.name + ":" + s.durationMin + ":" + s.price),
+    (services || []).map((s) => s.id + ":" + s.name + ":" + JSON.stringify(s.tiers) + ":" + JSON.stringify(s.addons)),
     [settings.openTime, settings.closeTime, settings.slotMin, settings.salonName, settings.publicNotice],
     normalizeRoster(roster),      // 班表變了也要重發
   ]);
