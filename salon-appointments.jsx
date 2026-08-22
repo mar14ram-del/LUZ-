@@ -4,9 +4,14 @@ import {
   ChevronLeft, ChevronRight, AlertTriangle, Check, Copy, Download,
   ExternalLink, Phone, Save, CircleAlert, Inbox, Users, Store,
 } from "lucide-react";
-import { STORES, getStore, storeName } from "./stores";
-import { RosterEditor, storeOfStaffOn, normalizeRoster, rateOf, totalFor, ROSTER_KEY } from "./roster";
-import { BookingInbox } from "./booking-admin";
+import { STORES, getStore, storeName, BRAND } from "./stores";
+import { RosterEditor, storeOfStaffOn, normalizeRoster, ROSTER_KEY } from "./roster";
+import {
+  SERVICE_KEY as SVC_KEY, normalizeServices, DEFAULT_SERVICES as SVC_DEFAULTS,
+  tiersOf, addonsOf, hasTiers, tierById, defaultTierId,
+  effectiveTier, totalOfPicks, ServiceCatalogEditor,
+} from "./services";
+import { BookingInbox, usePendingRequestCount } from "./booking-admin";
 import { useAutoPublish, SyncIndicator } from "./booking-sync";
 
 const FONT_IMPORT = `@import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap');`;
@@ -24,7 +29,6 @@ const SAGE_LIGHT = "#E3EADD";
 const MUTED = "#8A8072";
 
 const APPT_KEY = "appointments:list";
-const SERVICE_KEY = "appointments:services";
 const SETTINGS_KEY = "appointments:settings";
 const CUSTOMER_KEY = "customers:list";
 const STAFF_KEY = "finance:staff";
@@ -42,22 +46,17 @@ const STATUS = {
 const STATUS_ORDER = ["pending", "confirmed", "arrived", "done", "noshow", "cancelled"];
 const LIVE_STATUSES = ["pending", "confirmed", "arrived", "done"];
 
-const DEFAULT_SERVICES = [
-  { id: "sv-cut", name: "剪髮", durationMin: 60, price: 800 },
-  { id: "sv-wash-cut", name: "洗+剪", durationMin: 75, price: 950 },
-  { id: "sv-color", name: "染髮", durationMin: 120, price: 2800 },
-  { id: "sv-perm", name: "燙髮", durationMin: 150, price: 3200 },
-  { id: "sv-treat", name: "護髮", durationMin: 45, price: 1200 },
-  { id: "sv-scalp", name: "頭皮護理", durationMin: 60, price: 1500 },
-];
+
+const DEFAULT_SERVICES = SVC_DEFAULTS;
+const SERVICE_KEY = SVC_KEY;
 
 const DEFAULT_SETTINGS = {
   openTime: "10:00",
   closeTime: "21:00",
   slotMin: 15,
   reminderTemplate:
-    "{{顧客}} 您好，這裡是 LUZ 髮廊 🌿\n提醒您的預約：\n\n📅 {{日期}}（{{星期}}）{{時間}}\n💁 設計師：{{設計師}}\n✂️ 服務：{{服務}}\n\n如需改期請直接回覆這則訊息，謝謝您！",
-  salonName: "LUZ 髮廊",
+    "{{顧客}} 您好，這裡是 " + BRAND + " 🌿\n提醒您的預約：\n\n📅 {{日期}}（{{星期}}）{{時間}}\n💁 設計師：{{設計師}}\n✂️ 服務：{{服務}}\n\n如需改期請直接回覆這則訊息，謝謝您！",
+  salonName: BRAND,
   salonAddress: "",
 };
 
@@ -290,7 +289,7 @@ function reminderText(appt, customerMap, staffMap, settings) {
     .replace(/\{\{時間\}\}/g, toHHMM(appt.startMin) + "–" + toHHMM(appt.startMin + appt.durationMin))
     .replace(/\{\{設計師\}\}/g, staffName)
     .replace(/\{\{服務\}\}/g, serviceSummary(appt))
-    .replace(/\{\{店名\}\}/g, settings.salonName || "");
+    .replace(/\{\{店名\}\}/g, BRAND);
 }
 
 /* ---------- small shared pieces ---------- */
@@ -399,40 +398,67 @@ function AppointmentForm({ appt, isNew, customers, staff, services, settings, ro
     setForm((f) => ({ ...f, [key]: value }));
   }
 
+  /** 重算一組已選項目的總時間與金額 */
+  function recalc(f, picks, sid) {
+    const t = totalOfPicks(normalizeRoster(roster), sid !== undefined ? sid : f.staffId, picks, services);
+    return {
+      ...f,
+      services: picks,
+      durationMin: f.durationEdited ? f.durationMin : (t.durationMin || f.durationMin),
+      price: t.price,
+    };
+  }
+
+  /** 把一筆已選項目變成顯示用的物件 */
+  function decorate(pick, sid) {
+    const sv = services.find((x) => x.id === pick.serviceId);
+    if (!sv) return pick;
+    const e = effectiveTier(normalizeRoster(roster), sid, sv, pick.tierId);
+    const addonLabels = (pick.addonIds || [])
+      .map((aid) => (addonsOf(sv).find((a) => a.id === aid) || {}).label)
+      .filter(Boolean);
+    const parts = [e.label, ...addonLabels].filter(Boolean);
+    return {
+      ...pick,
+      id: sv.id,
+      name: sv.name + (parts.length ? "（" + parts.join("、") + "）" : ""),
+      durationMin: e.durationMin,
+      price: e.price,
+    };
+  }
+
+  function rebuild(f, picks, sid) {
+    const who = sid !== undefined ? sid : f.staffId;
+    const decorated = picks.map((p) => decorate(p, who));
+    return recalc(f, decorated, who);
+  }
+
   function toggleService(sv) {
     setForm((f) => {
-      const has = f.services.some((x) => x.id === sv.id);
-      const r = rateOf(normalizeRoster(roster), f.staffId, sv);
-      const next = has
-        ? f.services.filter((x) => x.id !== sv.id)
-        : [...f.services, { id: sv.id, name: sv.name, durationMin: r.durationMin, price: r.price }];
-      const sumDur = next.reduce((t, x) => t + (x.durationMin || 0), 0);
-      const sumPrice = next.reduce((t, x) => t + (x.price || 0), 0);
-      return {
-        ...f,
-        services: next,
-        durationMin: f.durationEdited ? f.durationMin : (sumDur || f.durationMin),
-        price: sumPrice,
-      };
+      const has = f.services.some((x) => x.serviceId === sv.id);
+      const picks = has
+        ? f.services.filter((x) => x.serviceId !== sv.id)
+        : [...f.services, { serviceId: sv.id, tierId: defaultTierId(sv), addonIds: [] }];
+      return rebuild(f, picks);
     });
   }
 
-  /** 換設計師時，已選的服務要換成他的價目 */
+  function setTier(svId, tierId) {
+    setForm((f) => rebuild(f, f.services.map((x) => (x.serviceId === svId ? { ...x, tierId } : x))));
+  }
+
+  function toggleAddon(svId, addonId) {
+    setForm((f) => rebuild(f, f.services.map((x) => {
+      if (x.serviceId !== svId) return x;
+      const on = (x.addonIds || []).includes(addonId);
+      return { ...x, addonIds: on ? x.addonIds.filter((a) => a !== addonId) : [...(x.addonIds || []), addonId] };
+    })));
+  }
+
+  /** 換設計師時，已選項目要換成他的價目 */
   function applyStaffRates(f, sid) {
     if (!f.services || f.services.length === 0) return f;
-    const r = normalizeRoster(roster);
-    const next = f.services.map((x) => {
-      const sv = (services || []).find((y) => y.id === x.id);
-      if (!sv) return x;
-      const rr = rateOf(r, sid, sv);
-      return { ...x, durationMin: rr.durationMin, price: rr.price };
-    });
-    return {
-      ...f,
-      services: next,
-      durationMin: f.durationEdited ? f.durationMin : next.reduce((t, x) => t + (x.durationMin || 0), 0),
-      price: next.reduce((t, x) => t + (x.price || 0), 0),
-    };
+    return rebuild(f, f.services, sid);
   }
 
   const customer = customerMap[form.customerId];
@@ -604,21 +630,54 @@ function AppointmentForm({ appt, isNew, customers, staff, services, settings, ro
 
       <div>
         <div className="field-label" style={{ marginBottom: 6 }}>服務項目</div>
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-          {services.length === 0 ? (
-            <div style={{ fontSize: 13, color: MUTED }}>還沒有服務項目，先到右上角「服務與設定」建立。</div>
-          ) : services.map((sv) => {
-            const on = form.services.some((x) => x.id === sv.id);
-            return (
-              <button key={sv.id} type="button" className={"chip" + (on ? " chip-on" : "")} onClick={() => toggleService(sv)}>
-                {on ? "✓ " : ""}{sv.name}{" "}
-                <span style={{ opacity: 0.7 }}>
-                  {rateOf(normalizeRoster(roster), form.staffId, sv).durationMin}分
-                </span>
-              </button>
-            );
-          })}
-        </div>
+        {services.length === 0 ? (
+          <div style={{ fontSize: 13, color: MUTED }}>還沒有服務項目，先到右上角「服務與設定」建立。</div>
+        ) : (
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            {services.map((sv) => {
+              const pick = form.services.find((x) => x.serviceId === sv.id);
+              const on = !!pick;
+              const e = on ? effectiveTier(normalizeRoster(roster), form.staffId, sv, pick.tierId) : null;
+              return (
+                <div key={sv.id}>
+                  <button type="button" className={"chip" + (on ? " chip-on" : "")} onClick={() => toggleService(sv)}>
+                    {on ? "✓ " : ""}{sv.name}
+                    {on && <span style={{ opacity: 0.75 }}>　{e.durationMin}分　{fmtMoney(e.price)}</span>}
+                  </button>
+
+                  {on && hasTiers(sv) && (
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 5, marginTop: 6, paddingLeft: 4 }}>
+                      {tiersOf(sv).map((t) => {
+                        const sel = pick.tierId === t.id;
+                        const te = effectiveTier(normalizeRoster(roster), form.staffId, sv, t.id);
+                        return (
+                          <button key={t.id} type="button" className={"subchip" + (sel ? " subchip-on" : "")}
+                            onClick={() => setTier(sv.id, t.id)}>
+                            {t.label || "標準"}　{fmtMoney(te.price)}{t.from ? " 起" : ""}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+
+                  {on && addonsOf(sv).length > 0 && (
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 5, marginTop: 5, paddingLeft: 4 }}>
+                      {addonsOf(sv).map((a) => {
+                        const sel = (pick.addonIds || []).includes(a.id);
+                        return (
+                          <button key={a.id} type="button" className={"subchip subchip-add" + (sel ? " subchip-on" : "")}
+                            onClick={() => toggleAddon(sv.id, a.id)}>
+                            {sel ? "✓ " : "+ "}{a.label} {fmtMoney(a.price)}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
       </div>
 
       <div className="form-grid-2">
@@ -683,25 +742,7 @@ function AppointmentForm({ appt, isNew, customers, staff, services, settings, ro
 function ServiceSettings({ services, settings, onSaveServices, onSaveSettings }) {
   const [list, setList] = useState(services);
   const [cfg, setCfg] = useState(settings);
-  const [draft, setDraft] = useState({ name: "", durationMin: 60, price: 0 });
 
-  function addService() {
-    if (!draft.name.trim()) return;
-    const next = [...list, { id: uid(), name: draft.name.trim(), durationMin: parseInt(draft.durationMin, 10) || 60, price: parseFloat(draft.price) || 0 }];
-    setList(next);
-    onSaveServices(next);
-    setDraft({ name: "", durationMin: 60, price: 0 });
-  }
-  function updateService(id, key, value) {
-    const next = list.map((s) => (s.id === id ? { ...s, [key]: key === "name" ? value : (parseFloat(value) || 0) } : s));
-    setList(next);
-    onSaveServices(next);
-  }
-  function removeService(id) {
-    const next = list.filter((s) => s.id !== id);
-    setList(next);
-    onSaveServices(next);
-  }
   function setCfgKey(key, value) {
     const next = { ...cfg, [key]: value };
     setCfg(next);
@@ -711,27 +752,8 @@ function ServiceSettings({ services, settings, onSaveServices, onSaveSettings })
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
       <div>
-        <div className="sub-head">服務項目</div>
-        <div className="sv-table">
-          <div className="sv-row sv-head">
-            <span>名稱</span><span>時長(分)</span><span>價格</span><span />
-          </div>
-          {list.map((s) => (
-            <div key={s.id} className="sv-row">
-              <input className="ledger-input" value={s.name} onChange={(e) => updateService(s.id, "name", e.target.value)} />
-              <input type="number" className="ledger-input" value={s.durationMin} onChange={(e) => updateService(s.id, "durationMin", e.target.value)} />
-              <input type="number" className="ledger-input" value={s.price} onChange={(e) => updateService(s.id, "price", e.target.value)} />
-              <ConfirmDelete onConfirm={() => removeService(s.id)} label="刪除項目" />
-            </div>
-          ))}
-          <div className="sv-row">
-            <input className="ledger-input" placeholder="新服務名稱" value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} />
-            <input type="number" className="ledger-input" value={draft.durationMin} onChange={(e) => setDraft({ ...draft, durationMin: e.target.value })} />
-            <input type="number" className="ledger-input" value={draft.price} onChange={(e) => setDraft({ ...draft, price: e.target.value })} />
-            <button type="button" className="ledger-icon-btn" onClick={addService} title="新增服務"><Plus size={16} /></button>
-          </div>
-        </div>
-        <div className="field-hint">選了服務會自動帶入時長與金額，之後在預約表單裡還能手動微調。</div>
+        <div className="sub-head">服務項目與價目</div>
+        <ServiceCatalogEditor services={list} onChange={(next) => { setList(next); onSaveServices(next); }} />
       </div>
 
       <div>
@@ -750,8 +772,13 @@ function ServiceSettings({ services, settings, onSaveServices, onSaveSettings })
       <div>
         <div className="sub-head">店家資訊與提醒範本</div>
         <div className="form-grid-2">
-          <Field label="店名"><input className="ledger-input" value={cfg.salonName} onChange={(e) => setCfgKey("salonName", e.target.value)} /></Field>
-          <Field label="地址（會寫進日曆事件）"><input className="ledger-input" value={cfg.salonAddress} onChange={(e) => setCfgKey("salonAddress", e.target.value)} /></Field>
+          <Field label="品牌名稱" hint="全站共用。要改的話請改 src/stores.jsx 最上面的 BRAND。">
+            <input className="ledger-input" value={BRAND} readOnly style={{ background: "#F2EFE6", color: MUTED }} />
+          </Field>
+          <Field label="分店地址" hint="各店地址在 src/stores.jsx 設定，會寫進日曆事件。">
+            <input className="ledger-input" value={STORES.map((s) => s.name + "：" + s.address).join("　")} readOnly
+              style={{ background: "#F2EFE6", color: MUTED }} />
+          </Field>
         </div>
         <Field label="LINE 提醒訊息範本" hint="可用的變數：{{顧客}} {{日期}} {{星期}} {{時間}} {{設計師}} {{服務}} {{店名}}">
           <textarea className="ledger-input" rows={7} value={cfg.reminderTemplate} onChange={(e) => setCfgKey("reminderTemplate", e.target.value)} />
@@ -1071,7 +1098,7 @@ function ListView({ appts, customerMap, staffMap, onOpen }) {
 export default function SalonAppointmentApp() {
   const [loaded, setLoaded] = useState(false);
   const [appts, setAppts] = useState([]);
-  const [services, setServices] = useState(DEFAULT_SERVICES);
+  const [services, setServices] = useState(() => normalizeServices(null));
   const [settings, setSettings] = useState(DEFAULT_SETTINGS);
   const [customers, setCustomers] = useState([]);
   const [staff, setStaff] = useState([]);
@@ -1086,6 +1113,7 @@ export default function SalonAppointmentApp() {
   const [toast, setToast] = useState("");
   const [storeFilter, setStoreFilter] = useState("");
   const [sync, setSync] = useState({ status: "idle", message: "" });
+  const pending = usePendingRequestCount();
 
   useEffect(() => {
     (async () => {
@@ -1098,8 +1126,9 @@ export default function SalonAppointmentApp() {
         loadKey(ROSTER_KEY, null),
       ]);
       setAppts(a);
-      if (sv) setServices(sv);
-      if (cfg) setSettings({ ...DEFAULT_SETTINGS, ...cfg });
+      setServices(normalizeServices(sv));
+      // 店名一律以 stores.jsx 的 BRAND 為準，忽略資料庫裡的舊值
+      if (cfg) setSettings({ ...DEFAULT_SETTINGS, ...cfg, salonName: BRAND });
       setCustomers(cs);
       setStaff(st);
       setRoster(normalizeRoster(ro));
@@ -1283,6 +1312,13 @@ export default function SalonAppointmentApp() {
           border: 1px solid ${PAPER_LINE}; background: #FFFDF8; color: ${MUTED}; cursor: pointer; white-space: nowrap;
         }
         .chip-on { background: ${INK}; color: ${PAPER}; border-color: ${INK}; }
+        .subchip {
+          font-family: 'IBM Plex Sans', sans-serif; font-size: 11.5px; padding: 5px 10px; border-radius: 6px;
+          border: 1px solid ${PAPER_LINE}; background: #FFFDF8; color: ${MUTED}; cursor: pointer; white-space: nowrap;
+        }
+        .subchip:hover { border-color: ${BRASS}; color: ${INK}; }
+        .subchip-on { background: ${BRASS_LIGHT}; border-color: ${BRASS}; color: ${BRASS}; font-weight: 600; }
+        .subchip-add { border-style: dashed; }
         .status-pill { display: inline-flex; align-items: center; padding: 3px 8px; border-radius: 999px; font-weight: 600; white-space: nowrap; }
         .form-grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 0 14px; }
         .avatar {
@@ -1312,6 +1348,21 @@ export default function SalonAppointmentApp() {
         .stat-value { font-family: 'IBM Plex Mono', monospace; font-size: 17px; font-weight: 600; }
         .board { background: ${PAPER_RAISED}; border: 1px solid ${PAPER_LINE}; border-radius: 10px; padding: 14px; }
         .empty-state { padding: 50px 20px; text-align: center; color: ${MUTED}; font-size: 13px; line-height: 1.7; }
+        .pending-btn {
+          display: inline-flex; align-items: center; gap: 6px; font-family: 'IBM Plex Sans', sans-serif;
+          font-size: 13px; font-weight: 500; color: ${MUTED}; background: #FFFDF8;
+          border: 1px solid ${PAPER_LINE}; border-radius: 6px; padding: 8px 14px; cursor: pointer; white-space: nowrap;
+        }
+        .pending-btn:hover { border-color: ${BRASS}; color: ${INK}; }
+        .pending-btn-on { background: ${INK}; color: ${PAPER}; border-color: ${INK}; }
+        .pending-btn-alert { border-color: ${BRASS}; color: ${BRASS}; background: ${BRASS_LIGHT}; }
+        .pending-btn-alert.pending-btn-on { background: ${INK}; color: ${PAPER}; border-color: ${INK}; }
+        .pending-badge {
+          display: inline-flex; align-items: center; justify-content: center; min-width: 19px; height: 19px;
+          padding: 0 5px; border-radius: 999px; background: ${BRASS}; color: #FFF;
+          font-family: 'IBM Plex Mono', monospace; font-size: 11px; font-weight: 600;
+        }
+        .pending-btn-on .pending-badge { background: ${PAPER}; color: ${INK}; }
 
         .day-scroll { overflow-x: auto; }
         .day-grid { display: grid; min-width: 520px; }
@@ -1378,7 +1429,7 @@ export default function SalonAppointmentApp() {
 
       <div style={{ maxWidth: 1180, margin: "0 auto", padding: "24px 18px 0" }}>
         <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", flexWrap: "wrap", gap: 8, marginBottom: 16 }}>
-          <div style={{ fontFamily: "'Fraunces', serif", fontSize: 24, fontWeight: 700 }}>預約管理</div>
+          <div style={{ fontFamily: "'Fraunces', serif", fontSize: 24, fontWeight: 700 }}>{BRAND} · 預約管理</div>
           <button className="ledger-btn" onClick={() => setShowSettings(true)}><Settings size={14} /> 服務與設定</button>
         </div>
 
@@ -1399,7 +1450,7 @@ export default function SalonAppointmentApp() {
 
         <div className="toolbar">
           <div className="view-tabs">
-            {[["day", "日", Calendar], ["week", "週", CalendarDays], ["month", "月", CalendarDays], ["list", "清單", List], ["inbox", "申請", Inbox], ["roster", "班表", Users]].map(([k, label, Icon]) => (
+            {[["day", "日", Calendar], ["week", "週", CalendarDays], ["month", "月", CalendarDays], ["list", "清單", List], ["roster", "設計師與班表", Users]].map(([k, label, Icon]) => (
               <button key={k} className={"view-tab" + (view === k ? " view-tab-on" : "")} onClick={() => setView(k)}>
                 <Icon size={14} /> {label}
               </button>
@@ -1437,6 +1488,16 @@ export default function SalonAppointmentApp() {
             </button>
           )}
           <SyncIndicator status={sync.status} message={sync.message} onPublishNow={autoPublish.publishNow} />
+
+          <button
+            className={"pending-btn" + (view === "inbox" ? " pending-btn-on" : "") + (pending.count > 0 ? " pending-btn-alert" : "")}
+            onClick={() => setView("inbox")}
+            title="客人從公開頁送出、還沒確認的預約"
+          >
+            <Inbox size={15} /> 待確認預約
+            {pending.count > 0 && <span className="pending-badge">{pending.count}</span>}
+          </button>
+
           <button className="ledger-btn ledger-btn-primary" onClick={() => openNew()}>
             <Plus size={15} /> 新增預約
           </button>
@@ -1499,6 +1560,7 @@ export default function SalonAppointmentApp() {
                 await saveKey(CUSTOMER_KEY, next);
                 return fresh;
               }}
+              onHandled={pending.refresh}
             />
           )}
           {view === "roster" && (

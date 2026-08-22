@@ -11,6 +11,7 @@
 
 import React, { useState, useEffect, useMemo } from "react";
 import { supabase } from "./supabaseClient";
+import { BRAND } from "./stores";
 import {
   Check, ChevronLeft, ChevronRight, Clock, MapPin, Store, Users,
   AlertCircle, Loader2, PartyPopper, Scissors,
@@ -49,6 +50,9 @@ function parseDate(s) {
 function todayStr() { return fmtDate(new Date()); }
 function weekdayOf(s) { return WEEKDAY_ZH[parseDate(s).getDay()]; }
 function fmtMoney(n) { return "NT$" + (Math.round(Number(n) || 0)).toLocaleString("zh-TW"); }
+/** 客人看到的價格一律加「起」——實際金額依髮長髮況而定 */
+function fmtFrom(n) { return fmtMoney(n) + " 起"; }
+const PRICE_NOTE = "此為預估價格。實際金額會因髮長、髮量與髮況調整，最終價格請現場與設計師確認。";
 function niceDate(s) {
   const d = parseDate(s);
   return (d.getMonth() + 1) + " 月 " + d.getDate() + " 日（" + weekdayOf(s) + "）";
@@ -64,25 +68,47 @@ function isValidPhone(p) {
   return digits.length >= 8 && digits.length <= 15;
 }
 
-/** 某位設計師某個服務的實際價格與時間（沒設定就用預設） */
-function rateOf(designer, sv) {
-  const r = (designer && designer.rates && designer.rates[sv.id]) || {};
-  const hasP = r.price !== undefined && r.price !== null && r.price !== "";
-  const hasD = r.durationMin !== undefined && r.durationMin !== null && r.durationMin !== "";
+function tiersOf(sv) { return (sv && sv.tiers) || []; }
+function addonsOf(sv) { return (sv && sv.addons) || []; }
+function hasTiers(sv) { return tiersOf(sv).length > 1; }
+function tierById(sv, tierId) {
+  const ts = tiersOf(sv);
+  return ts.find((t) => t.id === tierId) || ts[0] || null;
+}
+function defaultTierId(sv) {
+  const ts = tiersOf(sv);
+  if (!ts.length) return "";
+  return ts.slice().sort((a, b) => (Number(a.price) || 0) - (Number(b.price) || 0))[0].id;
+}
+
+/** 某位設計師某個分級的實際價格與時間（設計師的加價套用到所有分級） */
+function effectiveTier(designer, sv, tierId) {
+  const t = tierById(sv, tierId);
+  if (!t) return { price: 0, durationMin: 0, label: "", from: false };
+  const a = ((designer && designer.rates) || {})[sv.id] || {};
   return {
-    price: hasP ? Number(r.price) : Number(sv.price) || 0,
-    durationMin: hasD ? Number(r.durationMin) : Number(sv.durationMin) || 0,
+    price: Math.max(0, (Number(t.price) || 0) + (Number(a.priceAdj) || 0)),
+    durationMin: Math.max(0, (Number(t.durationMin) || 0) + (Number(a.durationAdj) || 0)),
+    label: t.label || "",
+    from: !!t.from,
   };
 }
 
-/** 一組服務對某位設計師的總時間與總金額 */
-function totalFor(designer, services) {
-  return (services || []).reduce(
-    (acc, sv) => {
-      const r = rateOf(designer, sv);
-      return { price: acc.price + r.price, durationMin: acc.durationMin + r.durationMin };
+/** 一組已選項目（服務+分級+加價）對某位設計師的總計 */
+function totalFor(designer, picks, services) {
+  return (picks || []).reduce(
+    (acc, p) => {
+      const sv = (services || []).find((s) => s.id === p.serviceId);
+      if (!sv) return acc;
+      const e = effectiveTier(designer, sv, p.tierId);
+      let price = e.price, dur = e.durationMin;
+      (p.addonIds || []).forEach((aid) => {
+        const ad = addonsOf(sv).find((x) => x.id === aid);
+        if (ad) { price += Number(ad.price) || 0; dur += Number(ad.durationMin) || 0; }
+      });
+      return { price: acc.price + price, durationMin: acc.durationMin + dur, from: acc.from || e.from };
     },
-    { price: 0, durationMin: 0 }
+    { price: 0, durationMin: 0, from: false }
   );
 }
 
@@ -139,7 +165,7 @@ export default function PublicBookingPage() {
   const [step, setStep] = useState(0);
   const [storeId, setStoreId] = useState("");
   const [staffId, setStaffId] = useState("");
-  const [pickedServices, setPickedServices] = useState([]);
+  const [picks, setPicks] = useState([]);
   const [monthAnchor, setMonthAnchor] = useState(todayStr());
   const [date, setDate] = useState("");
   const [startMin, setStartMin] = useState(null);
@@ -182,7 +208,7 @@ export default function PublicBookingPage() {
   const designers = (config && config.designers) || [];
   const services = (config && config.services) || [];
   const slotMin = (config && config.slotMin) || 15;
-  const salonName = (config && config.salonName) || "線上預約";
+  const salonName = (config && config.salonName) || BRAND;
 
   const storeById = useMemo(() => {
     const m = {};
@@ -208,19 +234,19 @@ export default function PublicBookingPage() {
   }, [designers, staffId, storeId, availability]);
 
   /** 某位設計師做完這些服務要多久、多少錢 */
-  const totalOf = (sid) => totalFor(staffById[sid], pickedServices);
+  const totalOf = (sid) => totalFor(staffById[sid], picks, services);
 
   // 價格與時間區間（客人還沒確定誰服務時顯示）
   const range = useMemo(() => {
     const pool = candidateStaff.length ? candidateStaff : [null];
-    const totals = pool.map((d) => totalFor(d, pickedServices));
+    const totals = pool.map((d) => totalFor(d, picks, services));
     const prices = totals.map((t) => t.price);
     const durs = totals.map((t) => t.durationMin);
     return {
       minPrice: Math.min(...prices), maxPrice: Math.max(...prices),
       minDur: Math.min(...durs), maxDur: Math.max(...durs),
     };
-  }, [candidateStaff, pickedServices]);
+  }, [candidateStaff, picks, services]);
 
   // 已確定設計師時用他的數字，否則用區間下限當代表
   const duration = staffId ? totalOf(staffId).durationMin : range.minDur;
@@ -279,13 +305,13 @@ export default function PublicBookingPage() {
         if (storeId && e.store !== storeId) return false;
         const st = storeById[e.store];
         const closeMin = st ? st.closeMin : 1260;
-        const dur = totalFor(staffById[id], pickedServices).durationMin;
+        const dur = totalFor(staffById[id], picks, services).durationMin;
         if (!dur) return false;
         return usableStarts(e.slots, dur, slotMin, closeMin).length > 0;
       });
     });
     return out;
-  }, [availability, pickedServices, staffId, storeId, slotMin, storeById, staffById]);
+  }, [availability, picks, services, staffId, storeId, slotMin, storeById, staffById]);
 
   /** 選定日期後可約的時間點 */
   const slotsForDate = useMemo(() => {
@@ -301,7 +327,7 @@ export default function PublicBookingPage() {
       if (storeId && e.store !== storeId) return;
       const st = storeById[e.store];
       const closeMin = st ? st.closeMin : 1260;
-      const dur = totalFor(staffById[id], pickedServices).durationMin;
+      const dur = totalFor(staffById[id], picks, services).durationMin;
       if (!dur) return;
       usableStarts(e.slots, dur, slotMin, closeMin).forEach((s) => {
         if (!bucket[s]) bucket[s] = [];
@@ -310,7 +336,7 @@ export default function PublicBookingPage() {
     });
     return Object.keys(bucket).map(Number).sort((a, b) => a - b)
       .map((s) => ({ startMin: s, staffIds: bucket[s] }));
-  }, [date, pickedServices, staffId, storeId, availability, slotMin, storeById, staffById]);
+  }, [date, picks, services, staffId, storeId, availability, slotMin, storeById, staffById]);
 
   const [slotStaff, setSlotStaff] = useState("");
 
@@ -338,15 +364,31 @@ export default function PublicBookingPage() {
   function chooseEntry(kind) {
     setEntry(kind);
     setStep(0);
-    setStoreId(""); setStaffId(""); setPickedServices([]);
+    setStoreId(""); setStaffId(""); setPicks([]);
     setDate(""); setStartMin(null); setSlotStaff("");
   }
 
   function toggleService(sv) {
-    setPickedServices((prev) => {
-      const has = prev.some((x) => x.id === sv.id);
-      return has ? prev.filter((x) => x.id !== sv.id) : [...prev, sv];
+    setPicks((prev) => {
+      const has = prev.some((x) => x.serviceId === sv.id);
+      return has
+        ? prev.filter((x) => x.serviceId !== sv.id)
+        : [...prev, { serviceId: sv.id, tierId: defaultTierId(sv), addonIds: [] }];
     });
+    setDate(""); setStartMin(null);
+  }
+
+  function setTier(svId, tierId) {
+    setPicks((prev) => prev.map((x) => (x.serviceId === svId ? { ...x, tierId } : x)));
+    setDate(""); setStartMin(null);
+  }
+
+  function toggleAddon(svId, addonId) {
+    setPicks((prev) => prev.map((x) => {
+      if (x.serviceId !== svId) return x;
+      const on = (x.addonIds || []).includes(addonId);
+      return { ...x, addonIds: on ? x.addonIds.filter((a) => a !== addonId) : [...(x.addonIds || []), addonId] };
+    }));
     setDate(""); setStartMin(null);
   }
 
@@ -356,6 +398,20 @@ export default function PublicBookingPage() {
   }
 
   function setF(key, value) { setForm((f) => ({ ...f, [key]: value })); }
+
+  /** 「染髮（中長）」這種顯示名稱 */
+  function svcLabel(p) {
+    const sv = services.find((s) => s.id === p.serviceId);
+    if (!sv) return "";
+    const t = tierById(sv, p.tierId);
+    const labels = [];
+    if (t && t.label) labels.push(t.label);
+    (p.addonIds || []).forEach((aid) => {
+      const ad = addonsOf(sv).find((a) => a.id === aid);
+      if (ad) labels.push(ad.label);
+    });
+    return sv.name + (labels.length ? "（" + labels.join("、") + "）" : "");
+  }
 
   const contactReady = form.customerName.trim().length > 0 && isValidPhone(form.phone);
 
@@ -371,7 +427,7 @@ export default function PublicBookingPage() {
     setSubmitError("");
     const st = staffById[finalStaffId];
     const store = storeById[finalStoreId];
-    const actual = totalFor(st, pickedServices);
+    const actual = totalFor(st, picks, services);
     const row = {
       req_date: date,
       start_min: startMin,
@@ -380,8 +436,8 @@ export default function PublicBookingPage() {
       store_name: store ? store.name : null,
       staff_id: finalStaffId || null,
       staff_name: st ? st.name : null,
-      service_ids: pickedServices.map((s) => s.id),
-      service_names: pickedServices.map((s) => s.name).join("、"),
+      service_ids: picks,
+      service_names: picks.map((p) => svcLabel(p)).join("、"),
       est_price: actual.price,
       customer_name: form.customerName.trim(),
       phone: form.phone.trim(),
@@ -477,6 +533,18 @@ export default function PublicBookingPage() {
       .opt:hover { border-color: ${BRASS}; }
       .opt-on { background: ${BRASS_LIGHT}; border-color: ${BRASS}; }
       .opt-meta { font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: ${MUTED}; white-space: nowrap; }
+      .tier-label { font-size: 11px; color: ${MUTED}; margin: 2px 0 5px 4px; }
+      .tier-row { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; padding-left: 4px; }
+      .tier {
+        display: flex; flex-direction: column; align-items: flex-start; gap: 2px;
+        font-family: inherit; padding: 7px 11px; border-radius: 8px;
+        border: 1px solid ${PAPER_LINE}; background: #FFFDF8; color: ${MUTED}; cursor: pointer;
+      }
+      .tier:hover { border-color: ${BRASS}; }
+      .tier-on { background: ${BRASS_LIGHT}; border-color: ${BRASS}; color: ${BRASS}; }
+      .tier-t { font-size: 12.5px; font-weight: 600; }
+      .tier-p { font-family: 'IBM Plex Mono', monospace; font-size: 11.5px; opacity: 0.85; }
+      .tier-add { border-style: dashed; }
       .opt-on .opt-meta { color: ${BRASS}; }
       .tick { width: 20px; height: 20px; border-radius: 50%; border: 1px solid ${PAPER_LINE}; display: flex;
               align-items: center; justify-content: center; flex-shrink: 0; background: #FFFDF8; }
@@ -575,14 +643,18 @@ export default function PublicBookingPage() {
             <div className="summary-row"><span>地址</span><span>{store.address}</span></div>
           )}
           <div className="summary-row"><span>日期</span><span>{niceDate(date)}</span></div>
-          <div className="summary-row"><span>時間</span><span>{toHHMM(startMin)}–{toHHMM(startMin + totalFor(st, pickedServices).durationMin)}</span></div>
+          <div className="summary-row"><span>時間</span><span>{toHHMM(startMin)}–{toHHMM(startMin + totalFor(st, picks, services).durationMin)}</span></div>
           <div className="summary-row"><span>設計師</span><span>{st ? st.name : "由店家安排"}</span></div>
-          <div className="summary-row"><span>服務</span><span>{pickedServices.map((s) => s.name).join("、")}　約 {fmtMoney(totalFor(st, pickedServices).price)}</span></div>
+          <div className="summary-row"><span>服務</span><span>{picks.map((p) => svcLabel(p)).join("、")}</span></div>
+          <div className="summary-row"><span>金額</span><span>{fmtFrom(totalFor(st, picks, services).price)}</span></div>
           <div className="summary-row"><span>姓名</span><span>{form.customerName}</span></div>
         </div>
-        <div className="note-band">
+        <div className="note-band" style={{ marginBottom: 10 }}>
           <AlertCircle size={15} style={{ flexShrink: 0, marginTop: 1 }} />
           這是預約申請，還不是確認完成的預約。收到我們的確認通知後才算正式成立。
+        </div>
+        <div style={{ fontSize: 12, color: MUTED, lineHeight: 1.7, padding: "0 2px" }}>
+          {PRICE_NOTE}
         </div>
       </div>
     </div>;
@@ -612,6 +684,11 @@ export default function PublicBookingPage() {
           </span>
           <span style={{ marginLeft: "auto" }}><ChevronRight size={18} color={MUTED} /></span>
         </button>
+
+        <div className="note-band" style={{ marginTop: 6 }}>
+          <AlertCircle size={15} style={{ flexShrink: 0, marginTop: 1 }} />
+          {PRICE_NOTE}
+        </div>
 
         <div style={{ marginTop: 26 }}>
           <div style={{ fontSize: 12, color: MUTED, marginBottom: 10 }}>我們的分店</div>
@@ -702,42 +779,86 @@ export default function PublicBookingPage() {
           {services.length === 0 ? (
             <div style={{ color: MUTED, fontSize: 13 }}>目前沒有可預約的服務項目。</div>
           ) : services.map((sv) => {
-            const on = pickedServices.some((x) => x.id === sv.id);
+            const pick = picks.find((x) => x.serviceId === sv.id);
+            const on = !!pick;
             const pool = candidateStaff.length ? candidateStaff : [null];
-            const rs = pool.map((d) => rateOf(d, sv));
-            const ps = rs.map((r) => r.price);
-            const ds = rs.map((r) => r.durationMin);
+            // 這個服務所有分級、所有可能設計師的價格與時間範圍
+            const es = [];
+            tiersOf(sv).forEach((t) => pool.forEach((d) => es.push(effectiveTier(d, sv, t.id))));
+            const ps = es.map((e) => e.price);
+            const ds = es.map((e) => e.durationMin);
+            const anyFrom = es.some((e) => e.from);
+
             return (
-              <button key={sv.id} className={"opt" + (on ? " opt-on" : "")} onClick={() => toggleService(sv)}>
-                <span style={{ display: "flex", alignItems: "center", gap: 11 }}>
-                  <span className={"tick" + (on ? " tick-on" : "")}>{on && <Check size={13} />}</span>
-                  {sv.name}
-                </span>
-                <span className="opt-meta">
-                  {fmtRange(Math.min(...ds), Math.max(...ds))} 分
-                  {Math.max(...ps) > 0 && "　" + fmtRange(Math.min(...ps), Math.max(...ps), fmtMoney)}
-                </span>
-              </button>
+              <div key={sv.id} style={{ marginBottom: on ? 12 : 0 }}>
+                <button className={"opt" + (on ? " opt-on" : "")} onClick={() => toggleService(sv)}
+                  style={{ marginBottom: on ? 7 : 8 }}>
+                  <span style={{ display: "flex", alignItems: "center", gap: 11 }}>
+                    <span className={"tick" + (on ? " tick-on" : "")}>{on && <Check size={13} />}</span>
+                    {sv.name}
+                  </span>
+                  <span className="opt-meta">
+                    {fmtRange(Math.min(...ds), Math.max(...ds))} 分
+                    {Math.max(...ps) > 0 && "　" + fmtRange(Math.min(...ps), Math.max(...ps), fmtMoney) + " 起"}
+                  </span>
+                </button>
+
+                {on && hasTiers(sv) && (
+                  <>
+                    <div className="tier-label">長度／方案</div>
+                    <div className="tier-row">
+                      {tiersOf(sv).map((t) => {
+                        const sel = pick.tierId === t.id;
+                        const te = effectiveTier(staffById[staffId] || candidateStaff[0] || null, sv, t.id);
+                        return (
+                          <button key={t.id} className={"tier" + (sel ? " tier-on" : "")}
+                            onClick={() => setTier(sv.id, t.id)}>
+                            <span className="tier-t">{t.label || "標準"}</span>
+                            <span className="tier-p">{fmtMoney(te.price)}{t.from ? " 起" : ""}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </>
+                )}
+
+                {on && addonsOf(sv).length > 0 && (
+                  <>
+                    <div className="tier-label">加選</div>
+                    <div className="tier-row">
+                      {addonsOf(sv).map((a) => {
+                        const sel = (pick.addonIds || []).includes(a.id);
+                        return (
+                          <button key={a.id} className={"tier tier-add" + (sel ? " tier-on" : "")}
+                            onClick={() => toggleAddon(sv.id, a.id)}>
+                            <span className="tier-t">{sel ? "✓ " : "+ "}{a.label}</span>
+                            <span className="tier-p">{fmtMoney(a.price)}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </>
+                )}
+              </div>
             );
           })}
-          {pickedServices.length > 0 && (
+          {picks.length > 0 && (
             <div style={{ marginTop: 12, paddingTop: 12, borderTop: "1px dashed " + PAPER_LINE }}>
               <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13.5 }}>
                 <span style={{ color: MUTED }}>共 {fmtRange(range.minDur, range.maxDur)} 分鐘</span>
                 <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontWeight: 600 }}>
-                  約 {fmtRange(range.minPrice, range.maxPrice, fmtMoney)}
+                  {fmtRange(range.minPrice, range.maxPrice, fmtMoney)} 起
                 </span>
               </div>
-              {range.minPrice !== range.maxPrice && (
-                <div style={{ fontSize: 11.5, color: MUTED, marginTop: 6, lineHeight: 1.5 }}>
-                  價格與時間依設計師而異，選好時段後會顯示實際金額。
-                </div>
-              )}
+              <div style={{ fontSize: 11.5, color: MUTED, marginTop: 7, lineHeight: 1.6 }}>
+                {range.minPrice !== range.maxPrice && "價格與時間依設計師而異。"}
+                {PRICE_NOTE}
+              </div>
             </div>
           )}
         </div>
       ),
-      canNext: pickedServices.length > 0,
+      canNext: picks.length > 0,
     },
     {
       head: "選一個時間",
@@ -803,7 +924,7 @@ export default function PublicBookingPage() {
                     <br />
                     {(() => {
                       const t = totalOf(slotStaff);
-                      return t.durationMin + " 分鐘　" + fmtMoney(t.price);
+                      return t.durationMin + " 分鐘　" + fmtFrom(t.price);
                     })()}
                   </span>
                 </div>
@@ -824,7 +945,12 @@ export default function PublicBookingPage() {
             <div className="summary-row"><span>日期</span><span>{niceDate(date)}</span></div>
             <div className="summary-row"><span>時間</span><span>{toHHMM(startMin)}–{toHHMM(startMin + totalOf(finalStaffId).durationMin)}</span></div>
             <div className="summary-row"><span>設計師</span><span>{staffById[finalStaffId] ? staffById[finalStaffId].name : "由店家安排"}</span></div>
-            <div className="summary-row"><span>服務</span><span>{pickedServices.map((s) => s.name).join("、")}　約 {fmtMoney(totalOf(finalStaffId).price)}</span></div>
+            <div className="summary-row"><span>服務</span><span>{picks.map((p) => svcLabel(p)).join("、")}</span></div>
+            <div className="summary-row"><span>金額</span><span>{fmtFrom(totalOf(finalStaffId).price)}</span></div>
+          </div>
+          <div className="note-band" style={{ marginTop: -6, marginBottom: 16 }}>
+            <AlertCircle size={15} style={{ flexShrink: 0, marginTop: 1 }} />
+            {PRICE_NOTE}
           </div>
 
           <div className="card">

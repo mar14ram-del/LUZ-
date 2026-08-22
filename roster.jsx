@@ -52,7 +52,7 @@ export function resolvePhoto(p) {
 export function emptyRoster() {
   return {
     profiles: {},      // staffId -> { photo, blurb, specialties[], title, publicVisible,
-                       //              rates: { 服務id: { price, durationMin } } }
+                       //              rates: { 服務id: { priceAdj, durationAdj } } }
     weekly: {},        // staffId -> { 0..6 -> storeId | null }
     overrides: {},     // "YYYY-MM-DD" -> { staffId -> storeId | null }
     closedDates: [],   // 兩店都公休
@@ -93,34 +93,6 @@ export function storeOfStaffOn(roster, staffId, dateStr) {
   return week[weekdayOfDate(dateStr)] || null;
 }
 
-/**
- * 某位設計師某個服務的實際價格與時間。
- * 沒有個別設定就沿用服務清單的預設值。
- */
-export function rateOf(roster, staffId, service) {
-  if (!service) return { price: 0, durationMin: 0, custom: false };
-  const prof = (roster && roster.profiles && roster.profiles[staffId]) || {};
-  const r = (prof.rates && prof.rates[service.id]) || {};
-  const hasPrice = r.price !== undefined && r.price !== null && r.price !== "";
-  const hasDur = r.durationMin !== undefined && r.durationMin !== null && r.durationMin !== "";
-  return {
-    price: hasPrice ? Number(r.price) : Number(service.price) || 0,
-    durationMin: hasDur ? Number(r.durationMin) : Number(service.durationMin) || 0,
-    custom: hasPrice || hasDur,
-  };
-}
-
-/** 一組服務對某位設計師的總時間與總金額 */
-export function totalFor(roster, staffId, services) {
-  return (services || []).reduce(
-    (acc, sv) => {
-      const r = rateOf(roster, staffId, sv);
-      return { price: acc.price + r.price, durationMin: acc.durationMin + r.durationMin };
-    },
-    { price: 0, durationMin: 0 }
-  );
-}
-
 /** 某天某家店有哪些設計師 */
 export function staffAtStoreOn(roster, allStaff, storeId, dateStr) {
   return (allStaff || []).filter((s) => storeOfStaffOn(roster, s.id, dateStr) === storeId);
@@ -159,6 +131,16 @@ function isDesigner(s) {
   const r = s.role || s.type || "";
   if (!r) return true;
   return /designer|設計/i.test(r);
+}
+
+/** 顯示這個服務的共同價目區間，讓你知道加價是加在什麼基礎上 */
+function rangeLabel(sv) {
+  const ts = (sv && sv.tiers) || [];
+  if (ts.length === 0) return "";
+  const ps = ts.map((t) => Number(t.price) || 0);
+  const lo = Math.min(...ps), hi = Math.max(...ps);
+  const f = (n) => "NT$" + n.toLocaleString("zh-TW");
+  return lo === hi ? f(lo) : f(lo) + "–" + f(hi);
 }
 
 function todayStr() {
@@ -311,6 +293,9 @@ export function RosterEditor({ staff, services, roster, onSave }) {
 
       <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: 14 }}>
         <div style={{ fontFamily: "'Fraunces', serif", fontSize: 17, fontWeight: 600 }}>設計師與班表</div>
+        <span style={{ fontSize: 10, color: MUTED, border: "1px solid " + PAPER_LINE, borderRadius: 999, padding: "2px 8px" }}>
+          含個人價目
+        </span>
         <div style={{ flex: 1 }} />
         {saved && <span style={{ fontSize: 12, color: SAGE, display: "flex", alignItems: "center", gap: 5 }}><Check size={13} /> 已儲存</span>}
         <button className="ledger-btn ledger-btn-primary" onClick={save} disabled={saving}>
@@ -419,39 +404,46 @@ export function RosterEditor({ staff, services, roster, onSave }) {
                                 e.target.value.split(/[,，]/).map((x) => x.trim()).filter(Boolean))}
                             />
                           </label>
-                          {(services || []).length > 0 && (
-                            <div style={{ marginTop: 6, marginBottom: 14 }}>
-                              <div style={{ fontSize: 12, color: MUTED, marginBottom: 2 }}>個人價目與時間</div>
+                          <div style={{ marginTop: 6, marginBottom: 14 }}>
+                            <div style={{ fontSize: 12, color: MUTED, marginBottom: 2 }}>個人價目與時間</div>
+                            {(services || []).length === 0 ? (
+                              <div className="rs-band" style={{ background: BRASS_LIGHT, color: BRASS, marginTop: 8 }}>
+                                <AlertTriangle size={14} style={{ flexShrink: 0, marginTop: 1 }} />
+                                還沒有服務項目。先到右上角「服務與設定」建立剪髮、染髮等項目，這裡才能設定個人加價。
+                              </div>
+                            ) : (
+                            <>
                               <div style={{ fontSize: 11, color: MUTED, lineHeight: 1.6, marginBottom: 9 }}>
-                                留空就沿用共同價目。只填不一樣的項目就好。
+                                填加價或減價的金額，會套用到該服務的所有分級。
+                                例如染髮填 +200，短、中長、長、特長都各加 200。留空就跟共同價目一樣。
                               </div>
                               <div className="rt-table">
                                 <div className="rt-row rt-head">
-                                  <span>服務</span><span>時間(分)</span><span>價格</span>
+                                  <span>服務</span><span>時間增減(分)</span><span>加價</span>
                                 </div>
                                 {services.map((sv) => {
                                   const r = (prof.rates || {})[sv.id] || {};
-                                  const dirtyDur = r.durationMin !== undefined && r.durationMin !== "";
-                                  const dirtyPrice = r.price !== undefined && r.price !== "";
+                                  const hasD = r.durationAdj !== undefined && r.durationAdj !== "";
+                                  const hasP = r.priceAdj !== undefined && r.priceAdj !== "";
+                                  const base = rangeLabel(sv);
                                   return (
                                     <div key={sv.id} className="rt-row">
                                       <span style={{ fontSize: 13 }}>
                                         {sv.name}
-                                        {(dirtyDur || dirtyPrice) && (
+                                        <span style={{ fontSize: 10.5, color: MUTED, marginLeft: 6 }}>{base}</span>
+                                        {(hasD || hasP) && (
                                           <span style={{ fontSize: 10, color: BRASS, marginLeft: 5 }}>已調整</span>
                                         )}
                                       </span>
                                       <input
-                                        type="number" className="ledger-input"
-                                        placeholder={String(sv.durationMin)}
-                                        value={dirtyDur ? r.durationMin : ""}
-                                        onChange={(e) => setRate(d.id, sv.id, "durationMin", e.target.value)}
+                                        type="number" className="ledger-input" placeholder="0"
+                                        value={hasD ? r.durationAdj : ""}
+                                        onChange={(e) => setRate(d.id, sv.id, "durationAdj", e.target.value)}
                                       />
                                       <input
-                                        type="number" className="ledger-input"
-                                        placeholder={String(sv.price)}
-                                        value={dirtyPrice ? r.price : ""}
-                                        onChange={(e) => setRate(d.id, sv.id, "price", e.target.value)}
+                                        type="number" className="ledger-input" placeholder="0"
+                                        value={hasP ? r.priceAdj : ""}
+                                        onChange={(e) => setRate(d.id, sv.id, "priceAdj", e.target.value)}
                                       />
                                     </div>
                                   );
@@ -463,8 +455,9 @@ export function RosterEditor({ staff, services, roster, onSave }) {
                                   全部改回共同價目
                                 </button>
                               )}
-                            </div>
-                          )}
+                            </>
+                            )}
+                          </div>
 
                           <button
                             className="ledger-btn"
