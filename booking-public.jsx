@@ -679,7 +679,7 @@ export default function PublicBookingPage() {
         <button className="entry-card" onClick={() => chooseEntry("staff")}>
           <span className="entry-ico"><Users size={22} /></span>
           <span className="entry-text">
-            <span className="entry-t">指定設計師</span>
+            <span className="entry-t">依設計師預約</span>
             <span className="entry-s">先選設計師，再看他哪幾天在哪家店</span>
           </span>
           <span style={{ marginLeft: "auto" }}><ChevronRight size={18} color={MUTED} /></span>
@@ -693,7 +693,7 @@ export default function PublicBookingPage() {
         <div style={{ marginTop: 26 }}>
           <div style={{ fontSize: 12, color: MUTED, marginBottom: 10 }}>我們的分店</div>
           {stores.map((s) => (
-            <div key={s.id} className="store-card" style={{ cursor: "default" }}>
+            <div key={s.id} className="store-card" style={{ cursor: s.address ? "pointer" : "default" }} onClick={() => { if (s.address) window.open("https://www.google.com/maps/search/?api=1&query=" + encodeURIComponent(s.name + " " + s.address), "_blank", "noopener"); }}>
               {s.logo && <div className="store-logo-wrap"><img className="store-logo" src={s.logo} alt={s.name} loading="lazy" /></div>}
               <div className="store-body">
                 <div className="store-name">{s.name}</div>
@@ -1023,7 +1023,7 @@ export default function PublicBookingPage() {
       <div className="bk-inner">
         <div className="bk-title">{salonName}</div>
         <div className="bk-sub">
-          {entry === "store" ? "依分店預約" : "指定設計師預約"}
+          {entry === "store" ? "依分店預約" : "依設計師預約"}
           {storeId && storeById[storeId] ? "　·　" + storeById[storeId].name : ""}
           {staffId && staffById[staffId] ? "　·　" + staffById[staffId].name : ""}
         </div>
