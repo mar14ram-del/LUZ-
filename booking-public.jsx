@@ -14,22 +14,55 @@ import { supabase } from "./supabaseClient";
 import { BRAND } from "./stores";
 import {
   Check, ChevronLeft, ChevronRight, Clock, MapPin, Store, Users,
-  AlertCircle, Loader2, PartyPopper, Scissors,
+  AlertCircle, Loader2, PartyPopper, Scissors, SquareParking, Pointer,
 } from "lucide-react";
 
-const FONT_IMPORT = `@import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap');`;
+const FONT_IMPORT = `@import url('https://fonts.googleapis.com/css2?family=Noto+Serif+TC:wght@600;700&family=Noto+Sans+TC:wght@400;500;600&display=swap');`;
 
-const INK = "#26211C";
-const PAPER = "#F6F1E6";
-const PAPER_LINE = "#E3D8BE";
-const PAPER_RAISED = "#FCFAF3";
-const BRASS = "#A9812F";
-const BRASS_LIGHT = "#F4E7C8";
-const WINE = "#7B3B34";
-const WINE_LIGHT = "#F2E1DE";
-const SAGE = "#4F6B4F";
-const SAGE_LIGHT = "#E3EADD";
-const MUTED = "#8A8072";
+const SERIF = "'Noto Serif TC', serif";
+const SANS = "'Noto Sans TC', system-ui, sans-serif";
+
+/* =====================================================================
+   藍染色系 —— 靈感來自藍染布：淺藍圓形、深靛十字花，落在米白底上。
+   舊的色名（BRASS / SAGE / WINE…）刻意保留，只換掉色值，
+   這樣檔案裡其他還在引用它們的地方不必改動就會跟著換色。
+   ===================================================================== */
+const INDIGO = "#2E5EA6";        // 主色：頁首、主要按鈕、選中狀態
+const INDIGO_DEEP = "#27508F";   // 主色 hover
+const INDIGO_MOTIF = "#16346B";  // 頁首裝飾圖紋
+const SKY = "#6FA8C7";           // 淺藍：卡片下緣彩色陰影、已完成的進度
+
+const INK = "#1C2A3E";
+const PAPER = "#EFEDE7";
+const PAPER_LINE = "#DFDBD0";
+const PAPER_RAISED = "#F8F7F3";
+const BRASS = INDIGO;            // 強調色（沿用舊名）
+const BRASS_LIGHT = "#E9F0F8";   // 選中底色
+const WINE = "#B4342B";
+const WINE_LIGHT = "#F7E4E1";
+const SAGE = "#2F6C8E";      // 深一階的藍：當文字或圖示用，落在淺色底上才夠對比
+const SAGE_LIGHT = "#DCEAF0";
+const MUTED = "#7C8AA0";
+
+/* 各分店的識別色 —— 用在卡片下緣那條彩色陰影與可點的文字上。
+   新增分店時在這裡補一個 id 就好，沒設定的會用預設的淺藍。 */
+const STORE_ACCENT = { luz: "#1B4C9E", ali: "#C51AA6" };
+function accentOf(storeId) { return STORE_ACCENT[storeId] || SKY; }
+
+/** 卡片下緣的彩色陰影 */
+function liftOf(color) {
+  return "0 3px 0 0 " + color + ", 0 12px 22px -16px rgba(20,40,80,0.55)";
+}
+
+/* Google 地圖：一個連到分店本身，一個連到分店附近的停車場 */
+function storeMapUrl(s) {
+  return "https://www.google.com/maps/search/?api=1&query=" +
+    encodeURIComponent(s.name + " 髮型屋 " + s.address);
+}
+function parkingMapUrl(s) {
+  return "https://www.google.com/maps/search/?api=1&query=" +
+    encodeURIComponent("停車場 " + s.address);
+}
 
 const WEEKDAY_ZH = ["日", "一", "二", "三", "四", "五", "六"];
 const FOUND_US_OPTIONS = ["朋友介紹", "Google 地圖", "Instagram", "Facebook", "路過看到", "其他"];
@@ -138,6 +171,21 @@ function StepDots({ step, total }) {
         <span key={i} className={"dot" + (i < step ? " dot-done" : i === step ? " dot-now" : "")} />
       ))}
     </div>
+  );
+}
+
+/** 藍染十字花圖紋 —— 頁首裝飾與品牌標記共用同一個形狀 */
+function Motif({ className, round }) {
+  return (
+    <svg className={className} viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+      {round ? <circle cx="50" cy="50" r="46" /> : (
+        <>
+          <circle cx="50" cy="27" r="27" /><circle cx="50" cy="73" r="27" />
+          <circle cx="27" cy="50" r="27" /><circle cx="73" cy="50" r="27" />
+          <circle cx="50" cy="50" r="20" />
+        </>
+      )}
+    </svg>
   );
 }
 
@@ -467,139 +515,216 @@ export default function PublicBookingPage() {
       ${FONT_IMPORT}
       * { box-sizing: border-box; }
       body { margin: 0; }
-      .bk-wrap { font-family: 'IBM Plex Sans', sans-serif; background: ${PAPER}; color: ${INK}; min-height: 100vh; padding: 22px 16px 96px; }
-      .bk-inner { max-width: 520px; margin: 0 auto; width: 100%; }
-      .bk-title { font-family: 'Fraunces', serif; font-size: 27px; font-weight: 700; letter-spacing: 0.01em; }
-      .bk-sub { font-size: 13px; color: ${MUTED}; margin-top: 5px; line-height: 1.6; }
-      .dots { display: flex; gap: 6px; margin: 18px 0 20px; }
-      .dot { width: 100%; height: 3px; border-radius: 2px; background: ${PAPER_LINE}; }
-      .dot-done { background: ${SAGE}; }
-      .dot-now { background: ${INK}; }
-      .step-head { font-family: 'Fraunces', serif; font-size: 18px; font-weight: 600; margin-bottom: 4px; }
-      .step-hint { font-size: 12.5px; color: ${MUTED}; margin-bottom: 14px; line-height: 1.6; }
-      .card { background: ${PAPER_RAISED}; border: 1px solid ${PAPER_LINE}; border-radius: 12px; padding: 16px; }
 
+      .bk-wrap { font-family: ${SANS}; background: ${PAPER}; color: ${INK}; min-height: 100vh; padding: 0 0 104px; }
+      .bk-inner { max-width: 520px; margin: 0 auto; width: 100%; padding: 0 20px; }
+      .bk-inner > .bk-title:first-child { padding-top: 26px; }
+
+      /* ---------- 頁首：滿版靛藍色塊 ---------- */
+      .bk-head { position: relative; margin: 0 -20px 20px; padding: 22px 20px 18px; overflow: hidden; }
+      .bk-head::before {
+        content: ""; position: absolute; top: 0; bottom: 0; left: 50%;
+        width: 100vw; transform: translateX(-50%); background: ${INDIGO};
+      }
+      .bk-head > * { position: relative; }
+      .bk-head-hero { padding: 30px 20px 34px; margin-bottom: 24px; }
+      .head-motif { position: absolute; fill: ${INDIGO_MOTIF}; pointer-events: none; }
+      .head-motif-a { top: -54px; left: -50px; width: 180px; height: 180px; opacity: 0.17; }
+      .head-motif-b { bottom: -80px; right: -44px; width: 200px; height: 200px; opacity: 0.15; }
+      .head-motif-c { top: -56px; right: -38px; width: 150px; height: 150px; opacity: 0.16; }
+
+      .bk-eyebrow { font-size: 11.5px; font-weight: 500; letter-spacing: 0.18em;
+                    text-transform: uppercase; color: #BACDE7; margin-bottom: 11px; }
+      .bk-brand { display: flex; align-items: center; gap: 11px; }
+      .bk-mark { flex-shrink: 0; fill: #A8C6E8; width: 30px; height: 30px; }
+      .bk-head:not(.bk-head-hero) .bk-mark { width: 23px; height: 23px; }
+
+      .bk-title { font-family: ${SERIF}; font-size: 26px; font-weight: 700; letter-spacing: 0.01em; color: ${INK}; }
+      .bk-head .bk-title { color: #FFFFFF; }
+      .bk-head-hero .bk-title { font-size: 28px; }
+      .bk-head:not(.bk-head-hero) .bk-title { font-size: 19px; }
+      .bk-sub { font-size: 13px; color: ${MUTED}; margin-top: 9px; line-height: 1.6; }
+      .bk-head .bk-sub { color: #C4D4EA; }
+      .bk-head:not(.bk-head-hero) .bk-sub { font-size: 11.5px; margin-top: 8px; color: #BACDE7; }
+
+      /* ---------- 進度條 ---------- */
+      .dots { display: flex; gap: 6px; margin: 0 0 20px; }
+      .dot { width: 100%; height: 3px; border-radius: 2px; background: #DCD8CC; }
+      .dot-done { background: ${SKY}; }
+      .dot-now { background: ${INDIGO}; }
+
+      /* ---------- 標題 ---------- */
+      .step-head { font-family: ${SERIF}; font-size: 20px; font-weight: 700; margin-bottom: 6px; }
+      .step-hint { font-size: 12.5px; color: ${MUTED}; margin-bottom: 16px; line-height: 1.6; }
+      .sec-title { display: flex; align-items: center; gap: 10px; margin: 30px 0 14px;
+                   font-family: ${SERIF}; font-size: 16px; font-weight: 700; color: ${INK}; }
+      .sec-title::after { content: ""; flex-grow: 1; height: 1px; background: #D9D5CA; }
+
+      .card { background: ${PAPER_RAISED}; border-radius: 12px; padding: 16px; box-shadow: ${liftOf(SKY)}; }
+
+      /* ---------- 首頁兩個入口 ---------- */
       .entry-card {
         display: flex; align-items: center; gap: 14px; width: 100%; text-align: left;
         font-family: inherit; color: ${INK}; background: ${PAPER_RAISED};
-        border: 1px solid ${PAPER_LINE}; border-radius: 14px; padding: 20px 18px;
-        cursor: pointer; margin-bottom: 12px;
+        border: none; border-radius: 10px; padding: 15px 16px;
+        cursor: pointer; margin-bottom: 12px; box-shadow: ${liftOf(SKY)};
       }
-      .entry-card:hover { border-color: ${BRASS}; background: ${BRASS_LIGHT}; }
-      .entry-ico { width: 46px; height: 46px; border-radius: 12px; background: ${SAGE_LIGHT}; color: ${SAGE};
+      .entry-card:hover { background: ${BRASS_LIGHT}; box-shadow: ${liftOf(INDIGO)}; }
+      .entry-ico { width: 44px; height: 44px; border-radius: 50%; background: #EFEAD9; color: #21467F;
                    display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
       .entry-text { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
-      .entry-t { display: block; font-family: 'Fraunces', serif; font-size: 17px; font-weight: 600; }
-      .entry-s { display: block; font-size: 12.5px; color: ${MUTED}; line-height: 1.5; }
+      .entry-t { display: block; font-size: 15.5px; font-weight: 600; }
+      .entry-s { display: block; font-size: 12px; color: ${MUTED}; line-height: 1.5; }
 
+      /* ---------- 分店卡（流程中可點選的那種） ---------- */
       .store-card {
         display: block; width: 100%; text-align: left; font-family: inherit; color: ${INK};
-        background: #FFFDF8; border: 1px solid ${PAPER_LINE}; border-radius: 12px;
-        padding: 0; cursor: pointer; margin-bottom: 12px; overflow: hidden;
+        background: ${PAPER_RAISED}; border: none; border-radius: 10px; padding: 0;
+        cursor: pointer; margin-bottom: 12px; overflow: hidden; box-shadow: ${liftOf(SKY)};
       }
-      .store-card:hover { border-color: ${BRASS}; }
-      .store-card-on { border-color: ${BRASS}; background: ${BRASS_LIGHT}; }
-      .store-logo-wrap { height: 92px; display: flex; align-items: center; justify-content: center;
-                         background: ${PAPER}; border-bottom: 1px solid ${PAPER_LINE}; padding: 12px; }
-      .store-logo { max-height: 68px; max-width: 74%; object-fit: contain; }
-      .store-body { padding: 12px 14px; }
-      .store-name { font-family: 'Fraunces', serif; font-size: 17px; font-weight: 600; }
-      .store-meta { font-size: 12px; color: ${MUTED}; margin-top: 4px; line-height: 1.6; display: flex; gap: 5px; align-items: flex-start; }
+      .store-card-on, .store-card-on:hover { background: ${BRASS_LIGHT}; box-shadow: ${liftOf(INDIGO)}; }
+      .store-logo-wrap { height: 84px; display: flex; align-items: center; justify-content: center;
+                         background: #FFFFFF; padding: 12px; }
+      .store-logo { max-height: 58px; max-width: 68%; object-fit: contain; }
+      .store-body { padding: 13px 15px; }
+      .store-name { font-family: ${SERIF}; font-size: 16px; font-weight: 700; }
+      .store-meta { display: flex; gap: 6px; align-items: flex-start; margin-top: 4px;
+                    font-size: 11.5px; color: ${MUTED}; line-height: 1.6; }
 
-      .staff-card {
-        display: flex; gap: 13px; width: 100%; text-align: left; font-family: inherit; color: ${INK};
-        background: #FFFDF8; border: 1px solid ${PAPER_LINE}; border-radius: 12px;
-        padding: 13px 14px; cursor: pointer; margin-bottom: 10px; align-items: center;
+      /* ---------- 首頁「各店位置與停車資訊」 ----------
+         整張卡不可點，只有店址與停車場位置兩行是連結。 */
+      .store-info { display: flex; align-items: flex-start; gap: 14px; padding: 16px; cursor: default; }
+      .store-info:hover { background: ${PAPER_RAISED}; }
+      .store-logo-tile { width: 62px; height: 62px; flex-shrink: 0; border-radius: 12px;
+                         background: #FFFFFF; border: 1px solid #E7E4DB; overflow: hidden;
+                         display: flex; align-items: center; justify-content: center; }
+      .store-logo-tile img { max-width: 50px; max-height: 50px; object-fit: contain; }
+      .store-info .store-body { padding: 0; flex: 1; min-width: 0; }
+      .store-info .store-name { margin-bottom: 7px; }
+      .map-link {
+        display: flex; align-items: center; gap: 6px; margin-bottom: 5px;
+        font-size: 12px; line-height: 1.5; color: var(--accent, ${INDIGO});
+        text-decoration: underline; text-underline-offset: 3px; text-decoration-thickness: 1px;
       }
-      .staff-card:hover { border-color: ${BRASS}; }
-      .staff-card-on { border-color: ${BRASS}; background: ${BRASS_LIGHT}; }
-      .avatar-img { border-radius: 50%; object-fit: cover; object-position: 50% 22%; flex-shrink: 0; background: ${SAGE_LIGHT}; }
-      .avatar-ph { border-radius: 50%; background: ${SAGE_LIGHT}; color: ${SAGE}; display: flex;
-                   align-items: center; justify-content: center; font-family: 'Fraunces', serif; font-weight: 600; flex-shrink: 0; }
+      .map-link:hover { filter: brightness(0.82); }
+      .tap-hint { display: flex; align-items: center; gap: 5px; margin-top: 7px;
+                  font-size: 10.5px; line-height: 1.4; color: #9AA6B8; }
+
+      /* ---------- 設計師卡 ---------- */
+      .staff-card {
+        display: flex; gap: 13px; align-items: center; width: 100%; text-align: left;
+        font-family: inherit; color: ${INK}; background: ${PAPER_RAISED};
+        border: none; border-radius: 10px; padding: 13px 14px;
+        cursor: pointer; margin-bottom: 10px; box-shadow: ${liftOf(SKY)};
+      }
+      .staff-card-on, .staff-card-on:hover { background: ${BRASS_LIGHT}; box-shadow: ${liftOf(INDIGO)}; }
+      .avatar-img { border-radius: 50%; object-fit: cover; object-position: 50% 22%;
+                    flex-shrink: 0; background: ${SAGE_LIGHT}; }
+      .avatar-ph { border-radius: 50%; background: ${SAGE_LIGHT}; color: ${INDIGO}; flex-shrink: 0;
+                   display: flex; align-items: center; justify-content: center;
+                   font-family: ${SERIF}; font-weight: 700; }
       .staff-text { display: flex; flex-direction: column; min-width: 0; flex: 1; }
       .staff-name { font-size: 15px; font-weight: 600; }
       .staff-title { font-size: 11.5px; color: ${MUTED}; }
       .staff-blurb { font-size: 12.5px; color: ${MUTED}; margin-top: 5px; line-height: 1.55; }
       .tags { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
-      .tag { font-size: 10.5px; padding: 2px 7px; border-radius: 999px; background: ${SAGE_LIGHT}; color: ${SAGE}; }
-      .tag-store { background: ${BRASS_LIGHT}; color: ${BRASS}; }
+      .tag { font-size: 10.5px; padding: 2px 8px; border-radius: 999px; background: ${SAGE_LIGHT}; color: #2F6C8E; }
+      .tag-store { background: ${BRASS_LIGHT}; color: ${INDIGO}; }
 
+      /* ---------- 服務選項 ---------- */
       .opt {
         display: flex; align-items: center; justify-content: space-between; gap: 10px; width: 100%;
         text-align: left; font-family: inherit; font-size: 14px; color: ${INK};
-        background: #FFFDF8; border: 1px solid ${PAPER_LINE}; border-radius: 10px;
-        padding: 13px 14px; cursor: pointer; margin-bottom: 8px;
+        background: ${PAPER_RAISED}; border: none; border-radius: 10px; padding: 13px 15px;
+        cursor: pointer; margin-bottom: 8px; box-shadow: 0 2px 0 0 #DCD8CC;
       }
-      .opt:hover { border-color: ${BRASS}; }
-      .opt-on { background: ${BRASS_LIGHT}; border-color: ${BRASS}; }
-      .opt-meta { font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: ${MUTED}; white-space: nowrap; }
+      .opt:hover { box-shadow: 0 2px 0 0 ${SKY}; }
+      .opt-on, .opt-on:hover { background: ${BRASS_LIGHT}; box-shadow: 0 2px 0 0 ${INDIGO}; }
+      .opt-meta { font-variant-numeric: tabular-nums; font-size: 12px; color: ${MUTED}; white-space: nowrap; }
+      .opt-on .opt-meta { color: ${INDIGO}; }
+      .tick { width: 20px; height: 20px; border-radius: 50%; border: 1.6px solid #C3CBD8; background: #FFFFFF;
+              display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+      .tick-on { background: ${INDIGO}; border-color: ${INDIGO}; color: #FFFFFF; }
+
       .tier-label { font-size: 11px; color: ${MUTED}; margin: 2px 0 5px 4px; }
       .tier-row { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; padding-left: 4px; }
-      .tier {
-        display: flex; flex-direction: column; align-items: flex-start; gap: 2px;
-        font-family: inherit; padding: 7px 11px; border-radius: 8px;
-        border: 1px solid ${PAPER_LINE}; background: #FFFDF8; color: ${MUTED}; cursor: pointer;
-      }
-      .tier:hover { border-color: ${BRASS}; }
-      .tier-on { background: ${BRASS_LIGHT}; border-color: ${BRASS}; color: ${BRASS}; }
+      .tier { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; font-family: inherit;
+              padding: 7px 11px; border-radius: 8px; border: 1px solid #E2DED3;
+              background: ${PAPER_RAISED}; color: ${MUTED}; cursor: pointer; }
+      .tier:hover { border-color: ${INDIGO}; }
+      .tier-on, .tier-on:hover { background: ${BRASS_LIGHT}; border-color: ${INDIGO}; color: ${INDIGO}; }
       .tier-t { font-size: 12.5px; font-weight: 600; }
-      .tier-p { font-family: 'IBM Plex Mono', monospace; font-size: 11.5px; opacity: 0.85; }
+      .tier-p { font-variant-numeric: tabular-nums; font-size: 11.5px; opacity: 0.85; }
       .tier-add { border-style: dashed; }
-      .opt-on .opt-meta { color: ${BRASS}; }
-      .tick { width: 20px; height: 20px; border-radius: 50%; border: 1px solid ${PAPER_LINE}; display: flex;
-              align-items: center; justify-content: center; flex-shrink: 0; background: #FFFDF8; }
-      .tick-on { background: ${INK}; border-color: ${INK}; color: ${PAPER}; }
 
-      .mon-bar { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
-      .mon-label { font-family: 'Fraunces', serif; font-size: 16px; font-weight: 600; }
+      /* ---------- 月曆 ---------- */
+      .mon-bar { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+      .mon-label { font-family: ${SERIF}; font-size: 15.5px; font-weight: 700; }
       .mon-head { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; margin-bottom: 4px; }
-      .mon-head span { text-align: center; font-size: 11px; color: ${MUTED}; }
+      .mon-head span { text-align: center; font-size: 11px; color: #97A2B3; }
       .mon-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; }
       .mon-cell {
-        aspect-ratio: 1 / 1; border-radius: 8px; border: 1px solid transparent; background: transparent;
-        font-family: 'IBM Plex Mono', monospace; font-size: 13px; color: ${MUTED};
-        display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px;
-        cursor: not-allowed; padding: 0;
+        aspect-ratio: 1 / 1; border-radius: 8px; border: none; background: transparent; padding: 0;
+        font-family: ${SANS}; font-variant-numeric: tabular-nums; font-size: 13px; color: #46546B;
+        display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;
+        cursor: not-allowed;
       }
-      .mon-open { background: #FFFDF8; border-color: ${PAPER_LINE}; color: ${INK}; cursor: pointer; font-weight: 600; }
-      .mon-open:hover { border-color: ${BRASS}; background: ${BRASS_LIGHT}; }
-      .mon-on { background: ${INK}; border-color: ${INK}; color: ${PAPER}; }
-      .mon-out { opacity: 0.25; }
+      .mon-open { background: ${BRASS_LIGHT}; color: ${INK}; font-weight: 600; cursor: pointer; }
+      .mon-open:hover { background: #DCE7F5; }
+      .mon-on, .mon-on:hover { background: ${INDIGO}; color: #FFFFFF; font-weight: 600; }
+      .mon-out { opacity: 0.3; }
       .mon-tag { font-size: 8.5px; line-height: 1; opacity: 0.85; }
-      .mon-pip { width: 4px; height: 4px; border-radius: 50%; background: ${SAGE}; }
-      .mon-on .mon-pip { background: ${PAPER}; }
+      .mon-pip { width: 4px; height: 4px; border-radius: 50%; background: ${INDIGO}; }
+      .mon-on .mon-pip { background: #FFFFFF; }
 
-      .slot-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(78px, 1fr)); gap: 7px; }
-      .slot { font-family: 'IBM Plex Mono', monospace; font-size: 13.5px; padding: 11px 4px; border-radius: 8px;
-              border: 1px solid ${PAPER_LINE}; background: #FFFDF8; color: ${INK}; cursor: pointer; }
-      .slot:hover { border-color: ${BRASS}; background: ${BRASS_LIGHT}; }
-      .slot-on { background: ${INK}; border-color: ${INK}; color: ${PAPER}; }
+      /* ---------- 時段 ---------- */
+      .slot-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(78px, 1fr)); gap: 8px; }
+      .slot { font-family: ${SANS}; font-variant-numeric: tabular-nums; font-size: 13.5px;
+              padding: 11px 4px; border-radius: 8px; border: 1px solid #E2DED3;
+              background: ${PAPER_RAISED}; color: #33415A; cursor: pointer; }
+      .slot:hover { border-color: ${INDIGO}; background: ${BRASS_LIGHT}; }
+      .slot-on, .slot-on:hover { background: ${INDIGO}; border-color: ${INDIGO}; color: #FFFFFF; font-weight: 600; }
 
-      .lbl { display: flex; flex-direction: column; gap: 5px; font-size: 12px; color: ${MUTED}; margin-bottom: 13px; }
-      .inp { font-family: 'IBM Plex Sans', sans-serif; font-size: 15px; color: ${INK}; background: #FFFDF8;
-             border: 1px solid ${PAPER_LINE}; border-radius: 8px; padding: 11px 12px; outline: none; width: 100%; resize: vertical; }
-      .inp:focus { border-color: ${BRASS}; box-shadow: 0 0 0 2px rgba(169,129,47,0.15); }
+      /* ---------- 表單 ---------- */
+      .lbl { display: flex; flex-direction: column; gap: 5px; font-size: 11.5px; color: #97A2B3; margin-bottom: 13px; }
+      .inp { font-family: ${SANS}; font-size: 14.5px; color: ${INK}; background: ${PAPER_RAISED};
+             border: 1px solid #E2DED3; border-radius: 10px; padding: 11px 13px; outline: none;
+             width: 100%; resize: vertical; }
+      .inp::placeholder { color: #B7BEC9; }
+      .inp:focus { border-color: ${INDIGO}; box-shadow: 0 0 0 2px rgba(46,94,166,0.15); }
       .seg { display: flex; gap: 8px; }
-      .seg button { flex: 1; font-family: inherit; font-size: 13.5px; padding: 11px 8px; border-radius: 8px;
-                    border: 1px solid ${PAPER_LINE}; background: #FFFDF8; color: ${MUTED}; cursor: pointer; }
-      .seg button.on { background: ${INK}; border-color: ${INK}; color: ${PAPER}; }
+      .seg button { flex: 1; font-family: inherit; font-size: 13.5px; padding: 11px 8px; border-radius: 9px;
+                    border: 1px solid #E2DED3; background: ${PAPER_RAISED}; color: ${MUTED}; cursor: pointer; }
+      .seg button.on { background: ${INDIGO}; border-color: ${INDIGO}; color: #FFFFFF; font-weight: 600; }
 
-      .summary { background: ${SAGE_LIGHT}; border-radius: 10px; padding: 13px 15px; margin-bottom: 16px; }
-      .summary-row { display: flex; gap: 10px; font-size: 13.5px; padding: 3px 0; color: ${INK}; }
-      .summary-row span:first-child { color: ${SAGE}; width: 52px; flex-shrink: 0; }
-      .note-band { display: flex; gap: 8px; align-items: flex-start; background: ${BRASS_LIGHT}; color: ${BRASS};
-                   padding: 11px 13px; border-radius: 9px; font-size: 12.5px; line-height: 1.6; }
-      .err-band { display: flex; gap: 8px; align-items: flex-start; background: ${WINE_LIGHT}; color: ${WINE};
-                  padding: 11px 13px; border-radius: 9px; font-size: 13px; line-height: 1.6; margin-bottom: 12px; }
+      /* ---------- 摘要與提示 ---------- */
+      .summary { background: ${PAPER_RAISED}; border-radius: 12px; padding: 6px 16px; margin-bottom: 16px;
+                 box-shadow: ${liftOf(INDIGO)}; }
+      .summary-row { display: flex; gap: 14px; padding: 10px 0; font-size: 13.5px; color: ${INK};
+                     border-bottom: 1px solid #EAE7DE; }
+      .summary-row:last-child { border-bottom: none; }
+      .summary-row span:first-child { width: 56px; flex-shrink: 0; padding-top: 1px; font-size: 12px; color: #8D99AB; }
+      .summary-row span:last-child { font-weight: 500; line-height: 1.5; }
 
-      .navbar { position: fixed; bottom: 0; left: 0; right: 0; background: ${PAPER};
-                border-top: 1px solid ${PAPER_LINE}; padding: 12px 16px; display: flex; gap: 10px;
-                max-width: 552px; margin: 0 auto; }
-      .btn { font-family: inherit; font-size: 15px; font-weight: 500; border-radius: 9px; padding: 13px 18px;
-             border: 1px solid ${PAPER_LINE}; background: #FFFDF8; color: ${INK}; cursor: pointer;
-             display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
-      .btn-main { flex: 1; background: ${INK}; color: ${PAPER}; border-color: ${INK}; }
-      .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+      .note-band { display: flex; gap: 9px; align-items: flex-start; background: ${BRASS_LIGHT}; color: #2B5286;
+                   padding: 12px 14px; border-radius: 10px; font-size: 12.5px; line-height: 1.6; }
+      .err-band { display: flex; gap: 9px; align-items: flex-start; background: ${WINE_LIGHT}; color: ${WINE};
+                  padding: 12px 14px; border-radius: 10px; font-size: 13px; line-height: 1.6; margin-bottom: 12px; }
+
+      /* ---------- 底部操作列 ---------- */
+      .navbar { position: fixed; bottom: 0; left: 0; right: 0; max-width: 560px; margin: 0 auto;
+                display: flex; gap: 12px; padding: 13px 20px 18px;
+                background: ${PAPER}; border-top: 1px solid ${PAPER_LINE}; }
+      .btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+             height: 48px; padding: 0 20px; border-radius: 10px; border: 1px solid ${PAPER_LINE};
+             background: ${PAPER_RAISED}; color: #42536B; cursor: pointer;
+             font-family: inherit; font-size: 14.5px; font-weight: 600; }
+      .btn-main { flex: 1; background: ${INDIGO}; border-color: ${INDIGO}; color: #FFFFFF;
+                  box-shadow: 0 8px 18px -10px rgba(27,76,158,0.8); }
+      .btn-main:hover { background: ${INDIGO_DEEP}; }
+      .btn:disabled { opacity: 0.45; cursor: not-allowed; }
+      .btn-main:disabled { opacity: 1; background: #C7CBD2; border-color: #C7CBD2; color: #FFFFFF; box-shadow: none; }
+
       .center-state { text-align: center; padding: 60px 20px; color: ${MUTED}; font-size: 14px; line-height: 1.8; }
       @keyframes spin { to { transform: rotate(360deg); } }
       .spin { animation: spin 1s linear infinite; }
@@ -630,7 +755,7 @@ export default function PublicBookingPage() {
       <div className="bk-inner">
         <div className="center-state" style={{ color: INK }}>
           <PartyPopper size={34} color={SAGE} />
-          <div style={{ fontFamily: "'Fraunces', serif", fontSize: 21, fontWeight: 600, margin: "14px 0 8px" }}>
+          <div style={{ fontFamily: SERIF, fontSize: 21, fontWeight: 600, margin: "14px 0 8px" }}>
             預約申請已送出
           </div>
           <div style={{ fontSize: 14, color: MUTED, marginBottom: 20 }}>
@@ -665,44 +790,74 @@ export default function PublicBookingPage() {
   if (!entry) {
     return <div className="bk-wrap">{styleTag}
       <div className="bk-inner">
-        <div className="bk-title">{salonName}</div>
-        <div className="bk-sub">{config.notice}</div>
-        <div style={{ height: 26 }} />
+        <div className="bk-head bk-head-hero">
+          <Motif className="head-motif head-motif-a" />
+          <Motif className="head-motif head-motif-b" round />
+          <div className="bk-eyebrow">LUZ STYLE</div>
+          <div className="bk-brand">
+            <Motif className="bk-mark" />
+            <div className="bk-title">{salonName}</div>
+          </div>
+          <div className="bk-sub">{config.notice}</div>
+        </div>
+
         <button className="entry-card" onClick={() => chooseEntry("store")}>
-          <span className="entry-ico"><Store size={22} /></span>
+          <span className="entry-ico"><Store size={22} strokeWidth={1.6} /></span>
           <span className="entry-text">
             <span className="entry-t">依分店預約</span>
             <span className="entry-s">先選店，再看那天有哪些設計師</span>
           </span>
-          <span style={{ marginLeft: "auto" }}><ChevronRight size={18} color={MUTED} /></span>
+          <span style={{ marginLeft: "auto" }}><ChevronRight size={18} color="#A6B4C7" /></span>
         </button>
         <button className="entry-card" onClick={() => chooseEntry("staff")}>
-          <span className="entry-ico"><Users size={22} /></span>
+          <span className="entry-ico"><Users size={22} strokeWidth={1.6} /></span>
           <span className="entry-text">
             <span className="entry-t">依設計師預約</span>
             <span className="entry-s">先選設計師，再看他哪幾天在哪家店</span>
           </span>
-          <span style={{ marginLeft: "auto" }}><ChevronRight size={18} color={MUTED} /></span>
+          <span style={{ marginLeft: "auto" }}><ChevronRight size={18} color="#A6B4C7" /></span>
         </button>
 
-        <div className="note-band" style={{ marginTop: 6 }}>
-          <AlertCircle size={15} style={{ flexShrink: 0, marginTop: 1 }} />
-          {PRICE_NOTE}
-        </div>
-
-        <div style={{ marginTop: 26 }}>
-          <div style={{ fontSize: 12, color: MUTED, marginBottom: 10 }}>我們的分店</div>
-          {stores.map((s) => (
-            <div key={s.id} className="store-card" style={{ cursor: s.address ? "pointer" : "default" }} onClick={() => { if (s.address) window.open("https://www.google.com/maps/search/?api=1&query=" + encodeURIComponent(s.name + " " + s.address), "_blank", "noopener"); }}>
-              {s.logo && <div className="store-logo-wrap"><img className="store-logo" src={s.logo} alt={s.name} loading="lazy" /></div>}
+        {/* 各店位置與停車資訊 —— 整張卡不可點，只有店址與停車場兩行是連結 */}
+        <div className="sec-title">各店位置與停車資訊</div>
+        {stores.map((s) => {
+          const accent = accentOf(s.id);
+          return (
+            <div key={s.id} className="store-card store-info"
+              style={{ "--accent": accent, boxShadow: liftOf(accent) }}>
+              {s.logo && (
+                <span className="store-logo-tile">
+                  <img src={s.logo} alt={s.name} loading="lazy" />
+                </span>
+              )}
               <div className="store-body">
                 <div className="store-name">{s.name}</div>
-                {s.address && <div className="store-meta"><MapPin size={12} style={{ marginTop: 2, flexShrink: 0 }} />{s.address}</div>}
-                <div className="store-meta"><Clock size={12} style={{ marginTop: 2, flexShrink: 0 }} />{toHHMM(s.openMin)}–{toHHMM(s.closeMin)}</div>
+                {s.address && (
+                  <>
+                    <a className="map-link" href={storeMapUrl(s)} target="_blank" rel="noreferrer">
+                      <MapPin size={13} strokeWidth={1.8} style={{ flexShrink: 0 }} />
+                      <span>{s.address}</span>
+                    </a>
+                    <a className="map-link" href={parkingMapUrl(s)} target="_blank" rel="noreferrer">
+                      <SquareParking size={13} strokeWidth={1.7} style={{ flexShrink: 0 }} />
+                      <span>停車場位置</span>
+                    </a>
+                    <div className="tap-hint">
+                      <Pointer size={11} strokeWidth={2} style={{ flexShrink: 0 }} />
+                      <span>點地址或停車場位置，直接開啟 Google 地圖</span>
+                    </div>
+                  </>
+                )}
+                {!s.address && (
+                  <div className="store-meta">
+                    <Clock size={12} style={{ marginTop: 2, flexShrink: 0 }} />
+                    {toHHMM(s.openMin)}–{toHHMM(s.closeMin)}
+                  </div>
+                )}
               </div>
             </div>
-          ))}
-        </div>
+          );
+        })}
       </div>
     </div>;
   }
@@ -846,7 +1001,7 @@ export default function PublicBookingPage() {
             <div style={{ marginTop: 12, paddingTop: 12, borderTop: "1px dashed " + PAPER_LINE }}>
               <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13.5 }}>
                 <span style={{ color: MUTED }}>共 {fmtRange(range.minDur, range.maxDur)} 分鐘</span>
-                <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontWeight: 600 }}>
+                <span style={{ fontVariantNumeric: "tabular-nums", fontWeight: 600 }}>
                   {fmtRange(range.minPrice, range.maxPrice, fmtMoney)} 起
                 </span>
               </div>
@@ -1021,11 +1176,17 @@ export default function PublicBookingPage() {
   return (
     <div className="bk-wrap">{styleTag}
       <div className="bk-inner">
-        <div className="bk-title">{salonName}</div>
-        <div className="bk-sub">
-          {entry === "store" ? "依分店預約" : "依設計師預約"}
-          {storeId && storeById[storeId] ? "　·　" + storeById[storeId].name : ""}
-          {staffId && staffById[staffId] ? "　·　" + staffById[staffId].name : ""}
+        <div className="bk-head">
+          <Motif className="head-motif head-motif-c" />
+          <div className="bk-brand">
+            <Motif className="bk-mark" />
+            <div className="bk-title">{salonName}</div>
+          </div>
+          <div className="bk-sub">
+            {entry === "store" ? "依分店預約" : "依設計師預約"}
+            {storeId && storeById[storeId] ? "　·　" + storeById[storeId].name : ""}
+            {staffId && staffById[staffId] ? "　·　" + staffById[staffId].name : ""}
+          </div>
         </div>
 
         <StepDots step={step} total={steps.length} />
