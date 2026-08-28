@@ -693,7 +693,7 @@ export default function PublicBookingPage() {
         <div style={{ marginTop: 26 }}>
           <div style={{ fontSize: 12, color: MUTED, marginBottom: 10 }}>我們的分店</div>
           {stores.map((s) => (
-            <div key={s.id} className="store-card" style={{ cursor: s.address ? "pointer" : "default" }} onClick={() => { if (s.address) window.open("https://www.google.com/maps/search/?api=1&query=" + encodeURIComponent(s.name + " " + s.address), "_blank", "noopener"); }}>
+            <div key={s.id} className="store-card" style={{ cursor: s.address ? "pointer" : "default" }} onClick={() => { if (s.address) window.open("https://www.google.com/maps/search/?api=1&query=" + encodeURIComponent(s.address), "_blank", "noopener"); }}>
               {s.logo && <div className="store-logo-wrap"><img className="store-logo" src={s.logo} alt={s.name} loading="lazy" /></div>}
               <div className="store-body">
                 <div className="store-name">{s.name}</div>
