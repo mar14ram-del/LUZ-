@@ -10,12 +10,20 @@
 // =====================================================================
 
 import React, { useState, useEffect, useMemo } from "react";
+import liff from "@line/liff";
 import { supabase } from "./supabaseClient";
 import { BRAND } from "./stores";
 import {
   Check, ChevronLeft, ChevronRight, Clock, MapPin, Store, Users,
   AlertCircle, Loader2, PartyPopper, Scissors, SquareParking, Pointer,
 } from "lucide-react";
+
+// LIFF 登入用來讓客人接收預約確認的 LINE 推播。
+// 這組 ID 是「登入」用的頻道，跟站方發訊息用的 Channel Access Token 是分開的東西。
+const LIFF_ID = import.meta.env.VITE_LIFF_ID;
+// 客人點「用 LINE 登入」時，LINE 會整頁導去登入再導回來，
+// 這段期間先把目前填到一半的預約狀態存起來，導回來後才能接著填，不用重選一次。
+const LIFF_PENDING_KEY = "luz_liff_pending_booking_v1";
 
 const FONT_IMPORT = `@import url('https://fonts.googleapis.com/css2?family=Noto+Serif+TC:wght@600;700&family=Noto+Sans+TC:wght@400;500;600&display=swap');`;
 
@@ -221,10 +229,15 @@ export default function PublicBookingPage() {
   const [form, setForm] = useState({
     customerName: "", phone: "", lineId: "", isNewCustomer: true,
     wantedService: "", allergies: "", foundUsFrom: FOUND_US_OPTIONS[0], note: "",
+    lineUserId: "", lineDisplayName: "",
   });
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState("");
   const [done, setDone] = useState(false);
+
+  const [liffReady, setLiffReady] = useState(false);
+  const [liffBusy, setLiffBusy] = useState(false);
+  const [liffError, setLiffError] = useState("");
 
   useEffect(() => {
     (async () => {
@@ -251,6 +264,64 @@ export default function PublicBookingPage() {
       setLoading(false);
     })();
   }, []);
+
+  // 初始化 LIFF；如果客人是「登入後被導回來」的，把先前存起來的填寫進度復原。
+  useEffect(() => {
+    if (!LIFF_ID) return; // 沒設定 LIFF_ID 就整段跳過，不影響原本不用 LINE 也能預約的流程
+    (async () => {
+      try {
+        await liff.init({ liffId: LIFF_ID });
+        setLiffReady(true);
+        if (liff.isLoggedIn()) {
+          try {
+            const raw = sessionStorage.getItem(LIFF_PENDING_KEY);
+            if (raw) {
+              const saved = JSON.parse(raw);
+              if (saved.entry) setEntry(saved.entry);
+              if (typeof saved.step === "number") setStep(saved.step);
+              if (saved.storeId) setStoreId(saved.storeId);
+              if (saved.staffId) setStaffId(saved.staffId);
+              if (saved.picks) setPicks(saved.picks);
+              if (saved.date) setDate(saved.date);
+              if (typeof saved.startMin === "number") setStartMin(saved.startMin);
+              if (saved.form) setForm((f) => ({ ...f, ...saved.form }));
+              sessionStorage.removeItem(LIFF_PENDING_KEY);
+            }
+          } catch { /* 復原失敗就算了，客人重填一次也不影響送出 */ }
+          const profile = await liff.getProfile();
+          setForm((f) => ({ ...f, lineUserId: profile.userId, lineDisplayName: profile.displayName || "" }));
+        }
+      } catch (e) {
+        // LIFF 初始化失敗（例如不支援的瀏覽器）就靜默放棄，「用 LINE 登入」按鈕不會顯示，
+        // 客人仍可用原本的手機/LINE ID 欄位完成預約。
+      }
+    })();
+  }, []);
+
+  /** 把目前填到一半的預約狀態存起來，準備讓客人去 LINE 登入再導回來 */
+  function saveStateBeforeLiffRedirect() {
+    try {
+      sessionStorage.setItem(LIFF_PENDING_KEY, JSON.stringify({ entry, step, storeId, staffId, picks, date, startMin, form }));
+    } catch { /* 存不起來就算了，最多是導回來要重填 */ }
+  }
+
+  async function handleLineLogin() {
+    setLiffError("");
+    setLiffBusy(true);
+    try {
+      if (!liff.isLoggedIn()) {
+        saveStateBeforeLiffRedirect();
+        liff.login({ redirectUri: window.location.href });
+        return; // 頁面即將整頁導離，不會執行到下面
+      }
+      const profile = await liff.getProfile();
+      setForm((f) => ({ ...f, lineUserId: profile.userId, lineDisplayName: profile.displayName || "" }));
+    } catch (e) {
+      setLiffError("LINE 登入時發生問題，請稍後再試，或直接留下手機號碼讓我們與您聯繫。");
+    } finally {
+      setLiffBusy(false);
+    }
+  }
 
   const stores = (config && config.stores) || [];
   const designers = (config && config.designers) || [];
@@ -490,6 +561,7 @@ export default function PublicBookingPage() {
       customer_name: form.customerName.trim(),
       phone: form.phone.trim(),
       line_id: form.lineId.trim() || null,
+      line_user_id: form.lineUserId || null,
       is_new_customer: form.isNewCustomer,
       wanted_service: form.isNewCustomer ? (form.wantedService.trim() || null) : null,
       allergies: form.isNewCustomer ? (form.allergies.trim() || null) : null,
@@ -1130,6 +1202,27 @@ export default function PublicBookingPage() {
             <label className="lbl">LINE ID<span style={{ fontSize: 11 }}>（選填，方便我們用 LINE 通知您）</span>
               <input className="inp" value={form.lineId} onChange={(e) => setF("lineId", e.target.value)} maxLength={60} />
             </label>
+
+            {liffReady && (
+              <div className="lbl" style={{ marginTop: 2 }}>
+                <div style={{ fontSize: 11, color: MUTED, marginBottom: 6 }}>想在預約確認的第一時間收到 LINE 通知嗎？</div>
+                {form.lineUserId ? (
+                  <div style={{
+                    display: "flex", alignItems: "center", gap: 8, padding: "10px 12px",
+                    borderRadius: 9, background: SAGE_LIGHT, color: SAGE, fontSize: 13,
+                  }}>
+                    <Check size={15} style={{ flexShrink: 0 }} />
+                    已連結 LINE{form.lineDisplayName ? "：" + form.lineDisplayName : ""}，確認後會通知您
+                  </div>
+                ) : (
+                  <button type="button" className="btn" onClick={handleLineLogin} disabled={liffBusy}
+                    style={{ width: "100%", justifyContent: "center" }}>
+                    {liffBusy ? <><Loader2 size={15} className="spin" /> 連接中…</> : <>用 LINE 登入，接收預約確認通知</>}
+                  </button>
+                )}
+                {liffError && <span style={{ color: WINE, fontSize: 11.5 }}>{liffError}</span>}
+              </div>
+            )}
 
             {form.isNewCustomer && (
               <>

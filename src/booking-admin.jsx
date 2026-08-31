@@ -291,7 +291,22 @@ export function BookingInbox({ appointments, customers, staff, services, roster,
       .update({ status: "approved", handled_at: new Date().toISOString(), matched_customer_id: customerId || null })
       .eq("id", req.id);
 
-    if (err) setError("已建立預約，但更新申請狀態失敗：" + err.message);
+    if (err) {
+      setError("已建立預約，但更新申請狀態失敗：" + err.message);
+    } else if (req.line_user_id) {
+      // 客人有用 LINE 登入過，發一則確認通知；推播失敗不影響預約已確認的結果，靜默略過就好。
+      const staffObj = (staff || []).find((s) => s.id === staffId);
+      const d = parseDate(req.req_date);
+      const dateLabel = (d.getMonth() + 1) + "月" + d.getDate() + "日（" + weekdayOf(req.req_date) + "）";
+      const message = [
+        "您好，" + req.customer_name + "！",
+        "您在" + (req.store_name || storeName(rosterStore || req.store_id) || "") + " " + dateLabel + " " + toHHMM(req.start_min) + " 的預約已確認 ✅",
+        staffObj ? "設計師：" + staffObj.name : "",
+        req.service_names ? "服務項目：" + req.service_names : "",
+        "期待為您服務！",
+      ].filter(Boolean).join("\n");
+      supabase.functions.invoke("notify-line", { body: { lineUserId: req.line_user_id, message } }).catch(() => {});
+    }
     setWorkingId("");
     load();
     if (onHandled) onHandled();
