@@ -234,6 +234,8 @@ export function BookingInbox({ appointments, customers, staff, services, roster,
     const svcIds = Array.isArray(req.service_ids) ? req.service_ids : [];
     // 用實際指派到的設計師的價目重算，而不是客人送出時看到的
     const r = normalizeRoster(roster);
+    // 設計師當天實際排在哪家店（req.store_id 是客人送出當下看到的店，若跟班表對不上以這個為準）
+    const rosterStore = storeOfStaffOn(r, staffId, req.req_date);
     // 客人送出的是 [{serviceId, tierId, addonIds}]；舊格式則是純 id 陣列
     const picks = svcIds.map((x) =>
       typeof x === "string" ? { serviceId: x, tierId: "", addonIds: [] } : x
