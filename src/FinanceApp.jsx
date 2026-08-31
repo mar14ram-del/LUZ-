@@ -758,8 +758,8 @@ function AssistantCard({ s, items, templates, onChangeItems, onAddTemplate, onRe
 }
 
 function DesignerDeductionsEditor({ items, onChange }) {
-  function addItem() {
-    onChange([...items, { id: uid(), name: "", type: "fixed", value: 0 }]);
+  function addItem(kind) {
+    onChange([...items, { id: uid(), name: "", type: "fixed", value: 0, kind }]);
   }
   function updateItem(id, patch) {
     onChange(items.map((i) => (i.id === id ? { ...i, ...patch } : i)));
@@ -769,17 +769,26 @@ function DesignerDeductionsEditor({ items, onChange }) {
   }
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-      {items.map((it) => (
-        <div key={it.id} style={{ display: "flex", gap: 6, alignItems: "center" }}>
-          <input className="ledger-input" style={{ flex: 1 }} placeholder="扣款項目名稱" value={it.name} onChange={(e) => updateItem(it.id, { name: e.target.value })} />
-          <button type="button" className="chip chip-on" style={{ flexShrink: 0, minWidth: 60 }} onClick={() => updateItem(it.id, { type: it.type === "percent" ? "fixed" : "percent" })}>
-            {it.type === "percent" ? "比例%" : "金額$"}
-          </button>
-          <input className="ledger-input" style={{ width: 90 }} type="number" min="0" value={it.value} onChange={(e) => updateItem(it.id, { value: parseFloat(e.target.value) || 0 })} />
-          <button type="button" className="ledger-icon-btn" onClick={() => removeItem(it.id)} aria-label="移除"><X size={14} /></button>
-        </div>
-      ))}
-      <button type="button" className="ledger-btn" style={{ fontSize: 12, alignSelf: "flex-start" }} onClick={addItem}><Plus size={13} /> 新增扣款項目</button>
+      {items.map((it) => {
+        const kind = it.kind === "add" ? "add" : "deduct";
+        return (
+          <div key={it.id} style={{ display: "flex", gap: 6, alignItems: "center" }}>
+            <button type="button" className={"chip" + (kind === "add" ? " chip-on" : "")} style={{ flexShrink: 0, minWidth: 60 }} onClick={() => updateItem(it.id, { kind: kind === "add" ? "deduct" : "add" })}>
+              {kind === "add" ? "＋獎金" : "－扣款"}
+            </button>
+            <input className="ledger-input" style={{ flex: 1 }} placeholder={kind === "add" ? "獎金項目名稱" : "扣款項目名稱"} value={it.name} onChange={(e) => updateItem(it.id, { name: e.target.value })} />
+            <button type="button" className="chip chip-on" style={{ flexShrink: 0, minWidth: 60 }} onClick={() => updateItem(it.id, { type: it.type === "percent" ? "fixed" : "percent" })}>
+              {it.type === "percent" ? "比例%" : "金額$"}
+            </button>
+            <input className="ledger-input" style={{ width: 90 }} type="number" min="0" value={it.value} onChange={(e) => updateItem(it.id, { value: parseFloat(e.target.value) || 0 })} />
+            <button type="button" className="ledger-icon-btn" onClick={() => removeItem(it.id)} aria-label="移除"><X size={14} /></button>
+          </div>
+        );
+      })}
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+        <button type="button" className="ledger-btn" style={{ fontSize: 12, alignSelf: "flex-start" }} onClick={() => addItem("deduct")}><Plus size={13} /> 新增扣款項目</button>
+        <button type="button" className="ledger-btn" style={{ fontSize: 12, alignSelf: "flex-start" }} onClick={() => addItem("add")}><Plus size={13} /> 新增獎金項目</button>
+      </div>
     </div>
   );
 }
@@ -793,8 +802,10 @@ function DesignerCard({ s, transactions, deductions, onChangeDeductions, onEdit,
   const netRevenue = revenue - baseMaterial;
   const commission = netRevenue * (s.commissionRate / 100);
 
-  const otherDeductionTotal = deductions.reduce((sum, d) => sum + (d.type === "percent" ? revenue * (d.value / 100) : d.value), 0);
-  const payable = s.baseSalary + commission - otherDeductionTotal;
+  const itemAmount = (d) => (d.type === "percent" ? revenue * (d.value / 100) : d.value);
+  const otherDeductionTotal = deductions.filter((d) => d.kind !== "add").reduce((sum, d) => sum + itemAmount(d), 0);
+  const bonusTotal = deductions.filter((d) => d.kind === "add").reduce((sum, d) => sum + itemAmount(d), 0);
+  const payable = s.baseSalary + commission + bonusTotal - otherDeductionTotal;
 
   return (
     <div style={{ background: PAPER_RAISED, border: "1px solid " + PAPER_LINE, borderRadius: 10, padding: 16 }}>
@@ -813,11 +824,11 @@ function DesignerCard({ s, transactions, deductions, onChangeDeductions, onEdit,
         <div>抽成 {fmtMoney(netRevenue)} × {s.commissionRate}% ＝ {fmtMoney(commission)}</div>
       </div>
       <div style={{ marginTop: 10 }}>
-        <div style={{ fontSize: 12, color: MUTED, marginBottom: 8 }}>其他扣款（代購、賠償等，從應付薪資中再扣除；基本物料已內含在抽成計算中，不用重複列在這裡）</div>
+        <div style={{ fontSize: 12, color: MUTED, marginBottom: 8 }}>其他獎金／扣款（代購、賠償、業績獎金等，從應付薪資中再加減；基本物料已內含在抽成計算中，不用重複列在這裡）</div>
         <DesignerDeductionsEditor items={deductions} onChange={onChangeDeductions} />
       </div>
       <div style={{ marginTop: 12, paddingTop: 12, borderTop: "1px dashed " + PAPER_LINE, display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 10 }}>
-        <div style={{ fontSize: 13, color: MUTED }}>底薪 {fmtMoney(s.baseSalary)} ＋ 抽成 {fmtMoney(commission)} － 其他扣款 {fmtMoney(otherDeductionTotal)}</div>
+        <div style={{ fontSize: 13, color: MUTED }}>底薪 {fmtMoney(s.baseSalary)} ＋ 抽成 {fmtMoney(commission)} ＋ 獎金 {fmtMoney(bonusTotal)} － 其他扣款 {fmtMoney(otherDeductionTotal)}</div>
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
           <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontWeight: 600, fontSize: 16, color: INK }}>本月應付 {fmtMoney(payable)}</div>
           <button className="ledger-btn" disabled={alreadySettled || payable <= 0} onClick={() => onSettle(s, payable)} style={{ fontSize: 12, opacity: alreadySettled || payable <= 0 ? 0.5 : 1 }}>
