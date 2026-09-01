@@ -17,12 +17,36 @@ const TABS = [
   { id: "appointments", label: "預約" },
 ];
 
+// 客人點「用 LINE 登入」後，LINE 會把人導回本站。
+// 這個過程中網址的 #/book 有機會被 LINE 的轉址流程吃掉，
+// 一旦 hash 不見了就會掉到後台登入畫面（客人根本沒有帳號）。
+// 所以在畫面渲染之前先判斷：只要看得出是「LINE 導回來的」，就把 hash 補回 #/book。
+function resolveInitialRoute() {
+  if (typeof window === "undefined") return "";
+  const hash = window.location.hash || "";
+  if (hash.startsWith("#/book")) return hash;
+
+  const cameBackFromLine =
+    window.location.search.includes("liff.state") ||
+    window.location.search.includes("code=") ||
+    hash.includes("access_token") ||
+    (() => {
+      try { return !!sessionStorage.getItem("luz_liff_pending_booking_v1"); }
+      catch { return false; }
+    })();
+
+  if (cameBackFromLine) {
+    try { window.history.replaceState(null, "", window.location.pathname + window.location.search + "#/book"); }
+    catch { /* 改不動網址就算了，下面回傳的值仍會把畫面導到預約頁 */ }
+    return "#/book";
+  }
+  return hash;
+}
+
 export default function App() {
   const [session, setSession] = useState(undefined);
   const [tab, setTab] = useState("finance");
-  const [route, setRoute] = useState(
-    typeof window !== "undefined" ? window.location.hash : ""
-  );
+  const [route, setRoute] = useState(resolveInitialRoute);
 
   // 監聽網址的 # 變化，讓 #/book 能切到公開預約頁
   useEffect(() => {
