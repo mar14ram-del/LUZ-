@@ -205,6 +205,20 @@ export function BookingInbox({ appointments, customers, staff, services, roster,
   async function approve(req) {
     const staffId = assign[req.id] || req.staff_id || "";
     if (!staffId) return;
+
+    // 硬性關卡：這位設計師該時段已經有預約就直接擋，不讓建立重複預約。
+    const hardClash = conflictsFor(req, staffId);
+    if (hardClash.length > 0) {
+      const who = staffMap[staffId] ? staffMap[staffId].name : "這位設計師";
+      setError(
+        who + " 在 " + req.req_date + " " + toHHMM(req.start_min) +
+        " 已有預約（" +
+        hardClash.map((c) => toHHMM(c.startMin) + "–" + toHHMM(c.startMin + c.durationMin)).join("、") +
+        "），無法建立。請改指派其他設計師，或退回請客人改期。"
+      );
+      return;
+    }
+
     setWorkingId(req.id);
 
     const match = matchCustomer(req);

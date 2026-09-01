@@ -244,9 +244,10 @@ export default function PublicBookingPage() {
   useEffect(() => {
     (async () => {
       try {
-        const [cfgRes, avRes] = await Promise.all([
+        const [cfgRes, avRes, holdRes] = await Promise.all([
           supabase.from("public_config").select("payload").eq("id", 1).maybeSingle(),
           supabase.from("public_availability").select("day, payload").gte("day", todayStr()).order("day"),
+          supabase.from("public_hold_slots").select("staff_id, req_date, start_min, duration_min").gte("req_date", todayStr()),
         ]);
         if (cfgRes.error) throw cfgRes.error;
         if (avRes.error) throw avRes.error;
@@ -258,6 +259,20 @@ export default function PublicBookingPage() {
         }
         const map = {};
         (avRes.data || []).forEach((r) => { map[r.day] = r.payload || {}; });
+
+        // 把「待確認」卡住的時段從公開空檔裡拿掉，客人就選不到。
+        // 這份讀失敗不擋畫面——最差就是退回「送出當下才擋」，瀏覽不受影響。
+        const holdSlotMin = (p && p.slotMin) || 15;
+        const holds = (!holdRes.error && Array.isArray(holdRes.data)) ? holdRes.data : [];
+        holds.forEach((h) => {
+          const day = map[h.req_date];
+          const entry = day && day[h.staff_id];
+          if (!entry || !Array.isArray(entry.slots)) return;
+          const hStart = Number(h.start_min) || 0;
+          const hEnd = hStart + (Number(h.duration_min) || 0);
+          entry.slots = entry.slots.filter((s) => !(s < hEnd && hStart < s + holdSlotMin));
+        });
+
         setConfig(p);
         setAvailability(map);
       } catch (e) {
@@ -574,7 +589,13 @@ export default function PublicBookingPage() {
     // 不加 .select()，客人沒有讀取權限
     const { error } = await supabase.from("booking_requests").insert(row);
     if (error) {
-      setSubmitError("送出失敗，請稍後再試一次，或直接來電預約。");
+      // 資料庫關卡擋下重疊時段時會丟這個訊息（見 public_hold_slots 那份 SQL）
+      const taken = /slot_already_taken/i.test(error.message || "") || error.code === "23505";
+      if (taken) {
+        setSubmitError("這個時段剛剛被其他客人預約了，請返回上一步改選其他時間。");
+      } else {
+        setSubmitError("送出失敗，請稍後再試一次，或直接來電預約。");
+      }
       setSubmitting(false);
       return;
     }
