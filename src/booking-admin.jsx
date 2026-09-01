@@ -296,7 +296,8 @@ export function BookingInbox({ appointments, customers, staff, services, roster,
     if (err) {
       setError("已建立預約，但更新申請狀態失敗：" + err.message);
     } else if (req.line_user_id) {
-      // 客人有用 LINE 登入過，發一則確認通知；推播失敗不影響預約已確認的結果，靜默略過就好。
+      // 客人有用 LINE 登入過，發一則確認通知。
+      // 推播失敗不影響「預約已確認」這件事，但要把原因顯示出來，不然出問題時完全無從查起。
       const staffObj = (staff || []).find((s) => s.id === staffId);
       const d = parseDate(req.req_date);
       const dateLabel = (d.getMonth() + 1) + "月" + d.getDate() + "日（" + weekdayOf(req.req_date) + "）";
@@ -307,7 +308,26 @@ export function BookingInbox({ appointments, customers, staff, services, roster,
         req.service_names ? "服務項目：" + req.service_names : "",
         "期待為您服務！",
       ].filter(Boolean).join("\n");
-      supabase.functions.invoke("notify-line", { body: { lineUserId: req.line_user_id, message } }).catch(() => {});
+      try {
+        const { data: pushData, error: pushErr } = await supabase.functions.invoke(
+          "notify-line",
+          { body: { lineUserId: req.line_user_id, message } }
+        );
+        if (pushErr) {
+          let detail = pushErr.message || String(pushErr);
+          // Edge Function 回非 2xx 時，真正的原因在 response body 裡，要撈出來才看得到
+          try {
+            if (pushErr.context && typeof pushErr.context.text === "function") {
+              detail += "｜" + (await pushErr.context.text());
+            }
+          } catch { /* 撈不到就用原本的訊息 */ }
+          setError("預約已確認，但 LINE 通知發送失敗：" + detail);
+        } else if (pushData && pushData.error) {
+          setError("預約已確認，但 LINE 通知發送失敗：" + JSON.stringify(pushData));
+        }
+      } catch (e) {
+        setError("預約已確認，但 LINE 通知發送失敗：" + String(e && e.message ? e.message : e));
+      }
     }
     setWorkingId("");
     load();
