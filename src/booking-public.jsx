@@ -20,7 +20,9 @@ import {
 
 // LIFF 登入用來讓客人接收預約確認的 LINE 推播。
 // 這組 ID 是「登入」用的頻道，跟站方發訊息用的 Channel Access Token 是分開的東西。
-const LIFF_ID = import.meta.env.VITE_LIFF_ID;
+// LIFF ID 本來就會被打包進前端、任何人都看得到，不是機密，所以直接寫死當預設值，
+// 省去每次都要在 GitHub 設密鑰；真要換帳號時再用環境變數覆蓋即可。
+const LIFF_ID = import.meta.env.VITE_LIFF_ID || "2011350495-Nsh4G20W";
 // 客人點「用 LINE 登入」時，LINE 會整頁導去登入再導回來，
 // 這段期間先把目前填到一半的預約狀態存起來，導回來後才能接著填，不用重選一次。
 const LIFF_PENDING_KEY = "luz_liff_pending_booking_v1";
