@@ -3,6 +3,7 @@ import {
   Plus, Trash2, Pencil, X, Search, Phone, Tag, Camera, AlertTriangle,
   Users, Save, ChevronDown, Star,
 } from "lucide-react";
+import { ImportCustomersButton } from "./import-customers";
 
 const FONT_IMPORT = `@import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap');`;
 
@@ -509,6 +510,13 @@ export default function SalonCustomerApp() {
             <button className="ledger-btn ledger-btn-primary" style={{ justifyContent: "center" }} onClick={startNew}>
               <Plus size={15} /> 新增顧客
             </button>
+            <ImportCustomersButton
+              staff={staff}
+              customers={customers}
+              blankCustomer={blankCustomer}
+              saveCustomers={(list) => saveKey(CUSTOMER_KEY, list)}
+              onMerged={(merged) => { setCustomers(merged); setSelectedId(null); setIsNew(false); }}
+            />
             <div style={{ position: "relative" }}>
               <Search size={14} style={{ position: "absolute", left: 10, top: 10, color: MUTED }} />
               <input className="ledger-input" style={{ paddingLeft: 30 }} placeholder="搜尋姓名、暱稱或電話" value={search} onChange={(e) => setSearch(e.target.value)} />
@@ -526,9 +534,18 @@ export default function SalonCustomerApp() {
                 <div style={{ padding: 20, textAlign: "center", color: MUTED, fontSize: 13 }}>
                   <Users size={20} style={{ marginBottom: 6, opacity: 0.5 }} /><br />找不到符合的顧客
                 </div>
-              ) : filtered.map((c) => (
-                <CustomerListItem key={c.id} c={c} active={selectedId === c.id && !isNew} onClick={() => select(c.id)} />
-              ))}
+              ) : (
+                <>
+                  {filtered.slice(0, 300).map((c) => (
+                    <CustomerListItem key={c.id} c={c} active={selectedId === c.id && !isNew} onClick={() => select(c.id)} />
+                  ))}
+                  {filtered.length > 300 && (
+                    <div style={{ padding: "10px 12px", textAlign: "center", color: MUTED, fontSize: 12 }}>
+                      還有 {filtered.length - 300} 位，請用上方搜尋縮小範圍
+                    </div>
+                  )}
+                </>
+              )}
             </div>
           </div>
 
