@@ -182,9 +182,13 @@ function CategoryLineEditor({ rows, categories, type, materials, priceChips, onC
     onChange(rows.map((r) => (r.id === id ? { ...r, ...patch } : r)));
   }
 
-  /** 換分類時，自動帶入該分類最便宜的價格 */
-  function pickCategory(id, category) {
-    onChange(rows.map((r) => (r.id === id ? { ...r, ...defaultRowFor(category, priceChips), id: r.id } : r)));
+  /** 點分類：沒選過就加一項、已選過就移除（可複選） */
+  function toggleCategory(category) {
+    if (rows.some((r) => r.category === category)) {
+      onChange(rows.filter((r) => r.category !== category));
+    } else {
+      onChange([...rows, defaultRowFor(category, type === "income" ? priceChips : null)]);
+    }
   }
 
   /** 點價格選項 */
@@ -209,93 +213,85 @@ function CategoryLineEditor({ rows, categories, type, materials, priceChips, onC
       amount: String(Math.max(0, cur + (on ? -addon.price : addon.price))),
     });
   }
-  function addRow() {
-    const used = new Set(rows.map((r) => r.category));
-    const next = categories.find((c) => !used.has(c)) || categories[0];
-    onChange([...rows, defaultRowFor(next, priceChips)]);
-  }
-  function removeRow(id) {
-    if (rows.length <= 1) return;
-    onChange(rows.filter((r) => r.id !== id));
-  }
-  return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-      {rows.map((r) => (
-        <div key={r.id} style={{ display: "flex", flexDirection: "column", gap: 6, padding: 8, background: PAPER, borderRadius: 8 }}>
-          {/* 分類：全部攤開，點一下就選 */}
-          <div style={{ display: "flex", gap: 5, flexWrap: "wrap" }}>
-            {categories.map((c) => (
-              <button key={c} type="button"
-                className={"pricechip" + (r.category === c ? " pricechip-on" : "")}
-                onClick={() => pickCategory(r.id, c)}>
-                {c}
-              </button>
-            ))}
-          </div>
+  const activeCats = new Set(rows.map((r) => r.category));
 
-          {/* 價格分級：選了分類後直接列出，點一下金額就填好 */}
-          {(() => {
-            const entry = (priceChips || {})[r.category];
-            if (!entry || entry.chips.length <= 1) return null;
-            return (
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+      {/* 分類：可複選，點一下加入 / 再點移除 */}
+      <div style={{ display: "flex", gap: 5, flexWrap: "wrap" }}>
+        {categories.map((c) => (
+          <button key={c} type="button"
+            className={"pricechip" + (activeCats.has(c) ? " pricechip-on" : "")}
+            onClick={() => toggleCategory(c)}>
+            {activeCats.has(c) ? "✓ " : ""}{c}
+          </button>
+        ))}
+      </div>
+
+      {rows.length === 0 && (
+        <div style={{ fontSize: 12, color: MUTED }}>點上面的分類開始，可以選多個，金額會自動加總。</div>
+      )}
+
+      {/* 每個選起來的分類一個明細區塊 */}
+      {rows.map((r) => {
+        const entry = (priceChips || {})[r.category];
+        const tiers = entry && entry.chips.length > 1 ? entry.chips : null;
+        const addons = type === "income" && entry ? (entry.addons || []) : [];
+        return (
+          <div key={r.id} style={{ display: "flex", flexDirection: "column", gap: 6, padding: 8, background: PAPER, borderRadius: 8 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+              <span style={{ flex: 1, fontSize: 13, fontWeight: 600, color: INK }}>{r.category}</span>
+              <span style={{ fontSize: 13, fontFamily: "'IBM Plex Mono', monospace", color: MUTED }}>{fmtMoney(parseFloat(r.amount) || 0)}</span>
+              <button type="button" className="ledger-icon-btn" onClick={() => toggleCategory(r.category)} aria-label="移除這個分類"><X size={14} /></button>
+            </div>
+
+            {tiers && (
               <div style={{ display: "flex", gap: 5, flexWrap: "wrap" }}>
-                {entry.chips.map((c) => (
+                {tiers.map((c) => (
                   <button key={c.id} type="button"
                     className={"pricechip" + (r.chipId === c.id ? " pricechip-on" : "")}
                     onClick={() => pickChip(r, c)}>
                     {c.label}　{fmtMoney(c.price)}{c.from ? " 起" : ""}
                   </button>
                 ))}
-                <button type="button"
-                  className={"pricechip pricechip-add" + (!r.chipId ? " pricechip-on" : "")}
-                  onClick={() => updateRow(r.id, { chipId: "" })}>
-                  自訂
-                </button>
               </div>
-            );
-          })()}
+            )}
 
-          {/* 金額：平常自動帶入，特殊情況（打折、無固定價）才手動改 */}
-          <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-            <span style={{ fontSize: 11, color: MUTED }}>金額</span>
-            <input className="ledger-input" style={{ flex: "0 0 110px" }} type="number" min="0" placeholder="金額"
-              value={r.amount} onChange={(e) => updateRow(r.id, { amount: e.target.value, chipId: "" })} />
-            <div style={{ flex: 1 }} />
-            {rows.length > 1 && (
-              <button type="button" className="ledger-icon-btn" onClick={() => removeRow(r.id)} aria-label="移除這個分類"><X size={14} /></button>
+            <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+              <span style={{ fontSize: 11, color: MUTED }}>金額</span>
+              <input className="ledger-input" style={{ flex: "0 0 110px" }} type="number" min="0" placeholder="金額"
+                value={r.amount} onChange={(e) => updateRow(r.id, { amount: e.target.value, chipId: "" })} />
+            </div>
+
+            {addons.length > 0 && (
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
+                {addons.map((a) => {
+                  const on = (r.addonIds || []).includes(a.id);
+                  return (
+                    <button key={a.id} type="button"
+                      className={"pricechip pricechip-add" + (on ? " pricechip-on" : "")}
+                      onClick={() => toggleAddon(r, a)}>
+                      {on ? "✓ " : "+ "}{a.label} {fmtMoney(a.price)}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+
+            {type === "income" && r.category === "產品銷售" && materials.length > 0 && (
+              <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                <select className="ledger-input" style={{ flex: 1 }} value={r.materialId} onChange={(e) => updateRow(r.id, { materialId: e.target.value })}>
+                  <option value="">— 不扣庫存 —</option>
+                  {materials.map((m) => <option key={m.id} value={m.id}>{m.name}（庫存 {m.stock}{m.unit}）</option>)}
+                </select>
+                {r.materialId && (
+                  <input className="ledger-input" style={{ width: 70 }} type="number" min="0" step="1" value={r.qty} onChange={(e) => updateRow(r.id, { qty: e.target.value })} placeholder="數量" />
+                )}
+              </div>
             )}
           </div>
-          {type === "income" && (priceChips || {})[r.category] && (priceChips[r.category].addons || []).length > 0 && (
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
-              {priceChips[r.category].addons.map((a) => {
-                const on = (r.addonIds || []).includes(a.id);
-                return (
-                  <button key={a.id} type="button"
-                    className={"pricechip pricechip-add" + (on ? " pricechip-on" : "")}
-                    onClick={() => toggleAddon(r, a)}>
-                    {on ? "✓ " : "+ "}{a.label} {fmtMoney(a.price)}
-                  </button>
-                );
-              })}
-            </div>
-          )}
-
-          {type === "income" && r.category === "產品銷售" && materials.length > 0 && (
-            <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-              <select className="ledger-input" style={{ flex: 1 }} value={r.materialId} onChange={(e) => updateRow(r.id, { materialId: e.target.value })}>
-                <option value="">— 不扣庫存 —</option>
-                {materials.map((m) => <option key={m.id} value={m.id}>{m.name}（庫存 {m.stock}{m.unit}）</option>)}
-              </select>
-              {r.materialId && (
-                <input className="ledger-input" style={{ width: 70 }} type="number" min="0" step="1" value={r.qty} onChange={(e) => updateRow(r.id, { qty: e.target.value })} placeholder="數量" />
-              )}
-            </div>
-          )}
-        </div>
-      ))}
-      <button type="button" className="ledger-btn" style={{ fontSize: 12, alignSelf: "flex-start" }} onClick={addRow}>
-        <Plus size={13} /> 加一個分類（例如順便買產品）
-      </button>
+        );
+      })}
     </div>
   );
 }
@@ -304,9 +300,7 @@ function TxForm({ onAdd, staff, materials, defaultStoreId, incomeCats, priceChip
   const [type, setType] = useState("income");
   const [date, setDate] = useState(todayStr());
   const [storeId, setStoreId] = useState(defaultStoreId || STORES[0].id);
-  const [rows, setRows] = useState(() => [
-    defaultRowFor((incomeCats && incomeCats[0]) || FALLBACK_INCOME[0], priceChips),
-  ]);
+  const [rows, setRows] = useState([]);
   const [note, setNote] = useState("");
   const [payment, setPayment] = useState("現金");
   const [staffId, setStaffId] = useState("");
@@ -315,9 +309,10 @@ function TxForm({ onAdd, staff, materials, defaultStoreId, incomeCats, priceChip
   const categories = type === "income" ? (incomeCats && incomeCats.length ? incomeCats : FALLBACK_INCOME) : EXPENSE_CATEGORIES;
 
   useEffect(() => {
-    setRows([defaultRowFor(categories[0], type === "income" ? priceChips : null)]);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    setRows([]);
   }, [type]);
+
+  const total = rows.reduce((s, r) => s + (parseFloat(r.amount) || 0), 0);
 
   useEffect(() => {
     if (defaultStoreId) setStoreId(defaultStoreId);
@@ -329,14 +324,14 @@ function TxForm({ onAdd, staff, materials, defaultStoreId, incomeCats, priceChip
       .map((r) => ({ ...r, amount: parseFloat(r.amount) || 0, qty: parseFloat(r.qty) || 0 }))
       .filter((r) => r.amount > 0);
     if (validRows.length === 0) {
-      setError("至少要填一筆金額");
+      setError("至少要選一個分類、填金額");
       return;
     }
     onAdd(validRows, {
       type, date, note: note.trim(), paymentMethod: payment, storeId,
       staffId: type === "income" ? (staffId || null) : null,
     });
-    setRows([defaultRowFor(categories[0], type === "income" ? priceChips : null)]);
+    setRows([]);
     setNote("");
     setError("");
   }
@@ -376,7 +371,7 @@ function TxForm({ onAdd, staff, materials, defaultStoreId, incomeCats, priceChip
       </div>
 
       <div className="field-label">
-        分類與金額（可以加多個，例如剪髮同時順便買產品）
+        分類與金額（可複選，例如剪髮＋染髮＋買產品，金額自動加總）
         <CategoryLineEditor rows={rows} categories={categories} type={type} materials={materials} priceChips={priceChips} onChange={setRows} />
       </div>
 
@@ -396,6 +391,17 @@ function TxForm({ onAdd, staff, materials, defaultStoreId, incomeCats, priceChip
       </label>
 
       {error && <div style={{ color: WINE, fontSize: 13 }}>{error}</div>}
+
+      <div style={{
+        display: "flex", justifyContent: "space-between", alignItems: "baseline",
+        borderTop: "1px solid " + PAPER_LINE, paddingTop: 10,
+      }}>
+        <span style={{ fontSize: 13, color: MUTED }}>合計</span>
+        <span style={{
+          fontFamily: "'IBM Plex Mono', monospace", fontWeight: 600, fontSize: 22,
+          color: type === "income" ? SAGE : WINE, fontVariantNumeric: "tabular-nums",
+        }}>{fmtMoney(total)}</span>
+      </div>
 
       <button type="submit" className="ledger-btn ledger-btn-primary" style={{ justifyContent: "center" }}>
         <Plus size={15} /> 新增這筆
