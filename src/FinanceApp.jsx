@@ -222,34 +222,45 @@ function CategoryLineEditor({ rows, categories, type, materials, priceChips, onC
     <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
       {rows.map((r) => (
         <div key={r.id} style={{ display: "flex", flexDirection: "column", gap: 6, padding: 8, background: PAPER, borderRadius: 8 }}>
-          <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
-            <select className="ledger-input" style={{ flex: "2 1 110px", minWidth: 0 }} value={r.category}
-              onChange={(e) => pickCategory(r.id, e.target.value)}>
-              {categories.map((c) => <option key={c} value={c}>{c}</option>)}
-            </select>
+          {/* 分類：全部攤開，點一下就選 */}
+          <div style={{ display: "flex", gap: 5, flexWrap: "wrap" }}>
+            {categories.map((c) => (
+              <button key={c} type="button"
+                className={"pricechip" + (r.category === c ? " pricechip-on" : "")}
+                onClick={() => pickCategory(r.id, c)}>
+                {c}
+              </button>
+            ))}
+          </div>
 
-            {(() => {
-              const entry = (priceChips || {})[r.category];
-              if (!entry || entry.chips.length <= 1) return null;
-              return (
-                <select className="ledger-input" style={{ flex: "2 1 120px", minWidth: 0 }}
-                  value={r.chipId || ""}
-                  onChange={(e) => {
-                    const c = entry.chips.find((x) => x.id === e.target.value);
-                    if (c) pickChip(r, c); else updateRow(r.id, { chipId: "" });
-                  }}>
-                  <option value="">自訂金額</option>
-                  {entry.chips.map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.label}　{fmtMoney(c.price)}{c.from ? " 起" : ""}
-                    </option>
-                  ))}
-                </select>
-              );
-            })()}
+          {/* 價格分級：選了分類後直接列出，點一下金額就填好 */}
+          {(() => {
+            const entry = (priceChips || {})[r.category];
+            if (!entry || entry.chips.length <= 1) return null;
+            return (
+              <div style={{ display: "flex", gap: 5, flexWrap: "wrap" }}>
+                {entry.chips.map((c) => (
+                  <button key={c.id} type="button"
+                    className={"pricechip" + (r.chipId === c.id ? " pricechip-on" : "")}
+                    onClick={() => pickChip(r, c)}>
+                    {c.label}　{fmtMoney(c.price)}{c.from ? " 起" : ""}
+                  </button>
+                ))}
+                <button type="button"
+                  className={"pricechip pricechip-add" + (!r.chipId ? " pricechip-on" : "")}
+                  onClick={() => updateRow(r.id, { chipId: "" })}>
+                  自訂
+                </button>
+              </div>
+            );
+          })()}
 
-            <input className="ledger-input" style={{ flex: "0 0 86px" }} type="number" min="0" placeholder="金額"
+          {/* 金額：平常自動帶入，特殊情況（打折、無固定價）才手動改 */}
+          <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+            <span style={{ fontSize: 11, color: MUTED }}>金額</span>
+            <input className="ledger-input" style={{ flex: "0 0 110px" }} type="number" min="0" placeholder="金額"
               value={r.amount} onChange={(e) => updateRow(r.id, { amount: e.target.value, chipId: "" })} />
+            <div style={{ flex: 1 }} />
             {rows.length > 1 && (
               <button type="button" className="ledger-icon-btn" onClick={() => removeRow(r.id)} aria-label="移除這個分類"><X size={14} /></button>
             )}
