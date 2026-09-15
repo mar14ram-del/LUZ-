@@ -66,6 +66,7 @@ function filterByStore(txs, storeId) {
 }
 const DEFAULT_ASSISTANT_TEMPLATES = ["全勤獎金", "業績獎金", "交通津貼", "伙食津貼", "遲到扣款", "請假扣款"];
 const DEFAULT_MATERIAL_RATE = 10;
+const DEFAULT_SALE_DISCOUNT = 0.6; // 產品銷售預設折數（六折）
 
 function uid() {
   return (crypto.randomUUID ? crypto.randomUUID() : "id-" + Date.now() + "-" + Math.random().toString(16).slice(2));
@@ -278,17 +279,34 @@ function CategoryLineEditor({ rows, categories, type, materials, priceChips, onC
               </div>
             )}
 
-            {type === "income" && r.category === "產品銷售" && materials.length > 0 && (
-              <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-                <select className="ledger-input" style={{ flex: 1 }} value={r.materialId} onChange={(e) => updateRow(r.id, { materialId: e.target.value })}>
-                  <option value="">— 不扣庫存 —</option>
-                  {materials.map((m) => <option key={m.id} value={m.id}>{m.name}（庫存 {m.stock}{m.unit}）</option>)}
-                </select>
-                {r.materialId && (
-                  <input className="ledger-input" style={{ width: 70 }} type="number" min="0" step="1" value={r.qty} onChange={(e) => updateRow(r.id, { qty: e.target.value })} placeholder="數量" />
-                )}
-              </div>
-            )}
+            {type === "income" && r.category === "產品銷售" && materials.length > 0 && (() => {
+              const selectedMaterial = r.materialId ? materials.find((m) => m.id === r.materialId) : null;
+              const qtyNum = parseFloat(r.qty) || 0;
+              const unitPrice = selectedMaterial && selectedMaterial.price ? Number(selectedMaterial.price) : 0;
+              const originalTotal = unitPrice * qtyNum;
+              const discountedTotal = Math.round(originalTotal * DEFAULT_SALE_DISCOUNT);
+              return (
+                <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                  <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                    <select className="ledger-input" style={{ flex: 1 }} value={r.materialId} onChange={(e) => updateRow(r.id, { materialId: e.target.value })}>
+                      <option value="">— 不扣庫存 —</option>
+                      {materials.map((m) => <option key={m.id} value={m.id}>{m.name}（庫存 {m.stock}{m.unit}）</option>)}
+                    </select>
+                    {r.materialId && (
+                      <input className="ledger-input" style={{ width: 70 }} type="number" min="0" step="1" value={r.qty} onChange={(e) => updateRow(r.id, { qty: e.target.value })} placeholder="數量" />
+                    )}
+                  </div>
+                  {r.materialId && unitPrice > 0 && (
+                    <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+                      <span style={{ fontSize: 11, color: MUTED }}>原價 {fmtMoney(originalTotal)}</span>
+                      <button type="button" className="pricechip" onClick={() => updateRow(r.id, { amount: String(discountedTotal) })}>
+                        打{DEFAULT_SALE_DISCOUNT * 10}折 → {fmtMoney(discountedTotal)}
+                      </button>
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
           </div>
         );
       })}
@@ -1138,33 +1156,42 @@ function ReportsView({ transactions, allTransactions, storeFilter }) {
 
 function MaterialForm({ editing, onSave, onCancel }) {
   const [name, setName] = useState("");
+  const [brand, setBrand] = useState("");
   const [unit, setUnit] = useState("");
   const [stock, setStock] = useState("");
   const [cost, setCost] = useState("");
+  const [price, setPrice] = useState("");
 
   useEffect(() => {
     if (editing) {
-      setName(editing.name); setUnit(editing.unit || "");
+      setName(editing.name); setBrand(editing.brand || ""); setUnit(editing.unit || "");
       setStock(String(editing.stock ?? "")); setCost(String(editing.costPerUnit ?? ""));
+      setPrice(String(editing.price ?? ""));
     } else {
-      setName(""); setUnit(""); setStock(""); setCost("");
+      setName(""); setBrand(""); setUnit(""); setStock(""); setCost(""); setPrice("");
     }
   }, [editing]);
 
   function submit(e) {
     e.preventDefault();
     if (!name.trim()) return;
-    onSave({ name: name.trim(), unit: unit.trim() || "個", stock: parseFloat(stock) || 0, costPerUnit: parseFloat(cost) || 0 });
-    if (!editing) { setName(""); setUnit(""); setStock(""); setCost(""); }
+    onSave({
+      name: name.trim(), brand: brand.trim(), unit: unit.trim() || "個",
+      stock: parseFloat(stock) || 0, costPerUnit: parseFloat(cost) || 0,
+      price: price === "" ? 0 : parseFloat(price) || 0,
+    });
+    if (!editing) { setName(""); setBrand(""); setUnit(""); setStock(""); setCost(""); setPrice(""); }
   }
 
   return (
     <form onSubmit={submit} style={{ background: PAPER_RAISED, border: "1px solid " + PAPER_LINE, borderRadius: 10, padding: 18, display: "flex", flexDirection: "column", gap: 10, height: "fit-content" }}>
       <div style={{ fontFamily: "'Fraunces', serif", fontSize: 15, fontWeight: 600, color: INK }}>{editing ? "編輯物料" : "新增物料"}</div>
       <label className="field-label">名稱<input className="ledger-input" value={name} onChange={(e) => setName(e.target.value)} required /></label>
+      <label className="field-label">品牌 (選填)<input className="ledger-input" placeholder="例：覺亞 / SU/TE" value={brand} onChange={(e) => setBrand(e.target.value)} /></label>
       <label className="field-label">單位<input className="ledger-input" placeholder="瓶 / 罐 / 份" value={unit} onChange={(e) => setUnit(e.target.value)} /></label>
       <label className="field-label">目前庫存量<input className="ledger-input" type="number" min="0" value={stock} onChange={(e) => setStock(e.target.value)} placeholder="0" /></label>
       <label className="field-label">單位成本 (NT$，選填)<input className="ledger-input" type="number" min="0" value={cost} onChange={(e) => setCost(e.target.value)} placeholder="0" /></label>
+      <label className="field-label">售價 (NT$，選填，不販售可留空)<input className="ledger-input" type="number" min="0" value={price} onChange={(e) => setPrice(e.target.value)} placeholder="0" /></label>
       <div style={{ display: "flex", gap: 8 }}>
         <button type="submit" className="ledger-btn ledger-btn-primary" style={{ flex: 1, justifyContent: "center" }}>{editing ? "儲存" : "新增"}</button>
         {editing && <button type="button" className="ledger-btn" onClick={onCancel}>取消</button>}
@@ -1193,8 +1220,10 @@ function MaterialsView({ materials, onAdd, onUpdate, onDelete }) {
         ) : materials.map((m) => (
           <div key={m.id} className="ledger-row">
             <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontSize: 14, fontWeight: 500, color: INK }}>{m.name}</div>
-              <div style={{ fontSize: 12, color: MUTED, marginTop: 2 }}>單位 {m.unit}{m.costPerUnit > 0 ? " · 成本 " + fmtMoney(m.costPerUnit) : ""}</div>
+              <div style={{ fontSize: 14, fontWeight: 500, color: INK }}>{m.brand ? m.brand + " · " : ""}{m.name}</div>
+              <div style={{ fontSize: 12, color: MUTED, marginTop: 2 }}>
+                單位 {m.unit}{m.costPerUnit > 0 ? " · 成本 " + fmtMoney(m.costPerUnit) : ""}{m.price > 0 ? " · 售價 " + fmtMoney(m.price) : ""}
+              </div>
             </div>
             <div style={{ width: 90, textAlign: "right", fontFamily: "'IBM Plex Mono', monospace", fontWeight: 600, fontSize: 15, color: m.stock <= 5 ? WINE : INK }}>
               {m.stock} {m.unit}
