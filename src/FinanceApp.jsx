@@ -1225,9 +1225,17 @@ function MaterialsView({ materials, onAdd, onUpdate, onDelete }) {
                 單位 {m.unit}{m.costPerUnit > 0 ? " · 成本 " + fmtMoney(m.costPerUnit) : ""}{m.price > 0 ? " · 售價 " + fmtMoney(m.price) : ""}
               </div>
             </div>
-            <div style={{ width: 90, textAlign: "right", fontFamily: "'IBM Plex Mono', monospace", fontWeight: 600, fontSize: 15, color: m.stock <= 5 ? WINE : INK }}>
-              {m.stock} {m.unit}
-            </div>
+            <select
+              className="ledger-input"
+              style={{ width: 90, textAlign: "right", fontFamily: "'IBM Plex Mono', monospace", fontWeight: 600, fontSize: 14, color: m.stock <= 5 ? WINE : INK, padding: "4px 6px" }}
+              value={m.stock}
+              onChange={(e) => onUpdate(m.id, { stock: parseInt(e.target.value, 10) || 0 })}
+            >
+              {Array.from({ length: 11 }, (_, i) => i).map((n) => (
+                <option key={n} value={n}>{n} {m.unit}</option>
+              ))}
+              {m.stock > 10 && <option value={m.stock}>{m.stock} {m.unit}</option>}
+            </select>
             <button className="ledger-icon-btn" onClick={() => setEditingId(m.id)} aria-label="編輯"><Pencil size={14} /></button>
             <ConfirmDelete onConfirm={() => onDelete(m.id)} />
           </div>
