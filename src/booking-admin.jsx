@@ -13,7 +13,7 @@ import { storeOfStaffOn, normalizeRoster } from "./roster";
 import { effectiveTier, addonsOf, defaultTierId } from "./services";
 import {
   Inbox, Check, X, RefreshCw, UploadCloud, AlertTriangle, Phone,
-  UserPlus, Link2, Clock, Loader2, CircleAlert, Sparkles,
+  UserPlus, Link2, Clock, Loader2, CircleAlert, Sparkles, Users,
 } from "lucide-react";
 
 const INK = "#26211C";
@@ -428,7 +428,9 @@ export function BookingInbox({ appointments, customers, staff, services, roster,
                   {req.line_id ? "　LINE: " + req.line_id : ""}
                   <br />
                   {req.service_names || "未選服務"}　約 {fmtMoney(req.est_price)}
-                  {req.staff_name ? "　指定：" + req.staff_name : "　未指定設計師"}
+                  {req.staff_requested === false
+                    ? "　不指定（系統排：" + (req.staff_name || "—") + "）"
+                    : (req.staff_name ? "　指定：" + req.staff_name : "　未指定設計師")}
                   {req.store_name ? "　分店：" + req.store_name : ""}
                 </div>
               </div>
@@ -441,6 +443,11 @@ export function BookingInbox({ appointments, customers, staff, services, roster,
                     {req.status === "approved" ? "已確認" : "已退回"}
                   </span>
                 )}
+                {req.staff_requested === false ? (
+                  <span className="req-tag" style={{ background: "#EFEDE7", color: INK }}>不指定</span>
+                ) : req.staff_name ? (
+                  <span className="req-tag" style={{ background: SAGE_LIGHT, color: SAGE }}>指定 {req.staff_name}</span>
+                ) : null}
                 {req.is_new_customer && (
                   <span className="req-tag" style={{ background: BRASS_LIGHT, color: BRASS }}>
                     <Sparkles size={10} /> 新客
@@ -449,6 +456,12 @@ export function BookingInbox({ appointments, customers, staff, services, roster,
               </div>
             </div>
 
+            {req.staff_requested === false && req.assign_note && !handled && (
+              <div className="req-band" style={{ background: PAPER, color: INK }}>
+                <Users size={14} style={{ flexShrink: 0, marginTop: 1 }} />
+                {req.assign_note}（當時有空）。要改派的話直接在下面換設計師。
+              </div>
+            )}
             {req.allergies && (
               <div className="req-band" style={{ background: WINE_LIGHT, color: WINE }}>
                 <AlertTriangle size={14} style={{ flexShrink: 0, marginTop: 1 }} />

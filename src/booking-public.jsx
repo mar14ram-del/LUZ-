@@ -15,7 +15,7 @@ import { supabase } from "./supabaseClient";
 import { BRAND } from "./stores";
 import {
   Check, ChevronLeft, ChevronRight, Clock, MapPin, Store, Users,
-  AlertCircle, Loader2, PartyPopper, Scissors, SquareParking, Pointer,
+  AlertCircle, Loader2, PartyPopper, Scissors, SquareParking, Pointer, Sparkles,
 } from "lucide-react";
 
 // LIFF 登入用來讓客人接收預約確認的 LINE 推播。
@@ -218,6 +218,8 @@ export default function PublicBookingPage() {
   const [loadError, setLoadError] = useState("");
   const [config, setConfig] = useState(null);
   const [availability, setAvailability] = useState({});
+  // 不指定設計師用：每個服務項目有哪些設計師參加排班（沒設定 = 全部都參加）
+  const [rotation, setRotation] = useState({});
 
   const [entry, setEntry] = useState("");          // "" | "store" | "staff"
   const [step, setStep] = useState(0);
@@ -244,10 +246,11 @@ export default function PublicBookingPage() {
   useEffect(() => {
     (async () => {
       try {
-        const [cfgRes, avRes, holdRes] = await Promise.all([
+        const [cfgRes, avRes, holdRes, rotRes] = await Promise.all([
           supabase.from("public_config").select("payload").eq("id", 1).maybeSingle(),
           supabase.from("public_availability").select("day, payload").gte("day", todayStr()).order("day"),
           supabase.from("public_hold_slots").select("staff_id, req_date, start_min, duration_min").gte("req_date", todayStr()),
+          supabase.from("public_rotation_lists").select("service_id, staff_ids"),
         ]);
         if (cfgRes.error) throw cfgRes.error;
         if (avRes.error) throw avRes.error;
@@ -273,8 +276,15 @@ export default function PublicBookingPage() {
           entry.slots = entry.slots.filter((s) => !(s < hEnd && hStart < s + holdSlotMin));
         });
 
+        // 讀失敗就當作全部設計師都參加；真正排人時資料庫會再檢查一次
+        const rot = {};
+        if (!rotRes.error && Array.isArray(rotRes.data)) {
+          rotRes.data.forEach((r) => { rot[r.service_id] = Array.isArray(r.staff_ids) ? r.staff_ids : null; });
+        }
+
         setConfig(p);
         setAvailability(map);
+        setRotation(rot);
       } catch (e) {
         setLoadError("載入時段時發生問題，請重新整理頁面，或直接來電預約。");
       }
@@ -357,6 +367,17 @@ export default function PublicBookingPage() {
     return m;
   }, [designers]);
 
+  // 依分店預約、沒有指定設計師 = 不指定，由排班表輪流安排
+  const anyStaff = entry === "store" && !staffId;
+
+  /** 不指定時，這位設計師有沒有參加客人選的每一個項目的排班 */
+  function canDoPicks(sid) {
+    return picks.every((p) => {
+      const list = rotation[p.serviceId];
+      return !Array.isArray(list) || list.includes(sid);
+    });
+  }
+
   // 這些設計師是這次可能為客人服務的人（用來算價格區間）
   const candidateStaff = useMemo(() => {
     if (staffId) return designers.filter((d) => d.id === staffId);
@@ -366,8 +387,9 @@ export default function PublicBookingPage() {
       const per = availability[day] || {};
       Object.keys(per).forEach((k) => { if (per[k] && per[k].store === storeId) ids.add(k); });
     });
-    return designers.filter((d) => ids.has(d.id));
-  }, [designers, staffId, storeId, availability]);
+    return designers.filter((d) => ids.has(d.id) && canDoPicks(d.id));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [designers, staffId, storeId, availability, picks, rotation]);
 
   /** 某位設計師做完這些服務要多久、多少錢 */
   const totalOf = (sid) => totalFor(staffById[sid], picks, services);
@@ -434,7 +456,7 @@ export default function PublicBookingPage() {
       const perStaff = availability[day] || {};
       const ids = staffId
         ? [staffId]
-        : Object.keys(perStaff).filter((k) => perStaff[k] && perStaff[k].store === storeId);
+        : Object.keys(perStaff).filter((k) => perStaff[k] && perStaff[k].store === storeId && canDoPicks(k));
       out[day] = ids.some((id) => {
         const e = perStaff[id];
         if (!e) return false;
@@ -447,7 +469,8 @@ export default function PublicBookingPage() {
       });
     });
     return out;
-  }, [availability, picks, services, staffId, storeId, slotMin, storeById, staffById]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [availability, picks, services, staffId, storeId, slotMin, storeById, staffById, rotation]);
 
   /** 選定日期後可約的時間點 */
   const slotsForDate = useMemo(() => {
@@ -455,7 +478,7 @@ export default function PublicBookingPage() {
     const perStaff = availability[date] || {};
     const ids = staffId
       ? [staffId]
-      : Object.keys(perStaff).filter((k) => perStaff[k] && perStaff[k].store === storeId);
+      : Object.keys(perStaff).filter((k) => perStaff[k] && perStaff[k].store === storeId && canDoPicks(k));
     const bucket = {};
     ids.forEach((id) => {
       const e = perStaff[id];
@@ -472,7 +495,8 @@ export default function PublicBookingPage() {
     });
     return Object.keys(bucket).map(Number).sort((a, b) => a - b)
       .map((s) => ({ startMin: s, staffIds: bucket[s] }));
-  }, [date, picks, services, staffId, storeId, availability, slotMin, storeById, staffById]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [date, picks, services, staffId, storeId, availability, slotMin, storeById, staffById, rotation]);
 
   const [slotStaff, setSlotStaff] = useState("");
 
@@ -570,8 +594,10 @@ export default function PublicBookingPage() {
       duration_min: actual.durationMin,
       store_id: finalStoreId || null,
       store_name: store ? store.name : null,
-      staff_id: finalStaffId || null,
-      staff_name: st ? st.name : null,
+      // 不指定時不帶設計師，由資料庫依「第一個選的項目」的排班表輪流排人
+      staff_id: anyStaff ? null : (finalStaffId || null),
+      staff_name: anyStaff ? null : (st ? st.name : null),
+      staff_requested: !anyStaff,
       service_ids: picks,
       service_names: picks.map((p) => svcLabel(p)).join("、"),
       est_price: actual.price,
@@ -864,7 +890,7 @@ export default function PublicBookingPage() {
           )}
           <div className="summary-row"><span>日期</span><span>{niceDate(date)}</span></div>
           <div className="summary-row"><span>時間</span><span>{toHHMM(startMin)}–{toHHMM(startMin + totalFor(st, picks, services).durationMin)}</span></div>
-          <div className="summary-row"><span>設計師</span><span>{st ? st.name : "由店家安排"}</span></div>
+          <div className="summary-row"><span>設計師</span><span>{anyStaff ? "不指定（確認後通知）" : (st ? st.name : "由店家安排")}</span></div>
           <div className="summary-row"><span>服務</span><span>{picks.map((p) => svcLabel(p)).join("、")}</span></div>
           <div className="summary-row"><span>金額</span><span>{fmtFrom(totalFor(st, picks, services).price)}</span></div>
           <div className="summary-row"><span>姓名</span><span>{form.customerName}</span></div>
@@ -967,7 +993,10 @@ export default function PublicBookingPage() {
           <div>
             {stores.map((s) => (
               <button key={s.id} className={"store-card" + (storeId === s.id ? " store-card-on" : "")}
-                onClick={() => { setStoreId(s.id); setDate(""); setStartMin(null); }}>
+                onClick={() => {
+                  if (s.id !== storeId) setStaffId("");   // 換店時設計師重選，避免選到不在這家店的人
+                  setStoreId(s.id); setDate(""); setStartMin(null);
+                }}>
                 {s.logo && <div className="store-logo-wrap"><img className="store-logo" src={s.logo} alt={s.name} loading="lazy" /></div>}
                 <div className="store-body">
                   <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -1019,8 +1048,59 @@ export default function PublicBookingPage() {
         canNext: !!staffId,
       };
 
+  // 依分店預約：選完分店後選「不指定」或指定這家店的某位設計師
+  const designersAtStore = designers.filter((d) => (storesOfStaff[d.id] || []).includes(storeId));
+  const pickDesignerStep = {
+    head: "想找哪位設計師？",
+    hint: (storeById[storeId] ? storeById[storeId].name + "　·　" : "") + "沒有特別指定的話，選第一個就好。",
+    body: (
+      <div>
+        <button className={"staff-card" + (!staffId ? " staff-card-on" : "")}
+          onClick={() => { setStaffId(""); setDate(""); setStartMin(null); }}>
+          <span style={{
+            width: 58, height: 58, borderRadius: "50%", background: "#EFEAD9", color: INDIGO,
+            display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0,
+          }}>
+            <Sparkles size={24} strokeWidth={1.6} />
+          </span>
+          <span className="staff-text">
+            <span className="staff-name">不指定，由店家安排</span>
+            <span className="staff-blurb" style={{ display: "block" }}>依您選的項目，由合適的設計師輪流服務。</span>
+          </span>
+          {!staffId && <Check size={17} color={BRASS} />}
+        </button>
+
+        {designersAtStore.length > 0 && <div className="sec-title">或指定設計師</div>}
+        {designersAtStore.map((d) => {
+          const on = staffId === d.id;
+          return (
+            <button key={d.id} className={"staff-card" + (on ? " staff-card-on" : "")}
+              onClick={() => { setStaffId(d.id); setDate(""); setStartMin(null); }}>
+              <Avatar photo={d.photo} name={d.name} size={58} />
+              <span className="staff-text">
+                <span style={{ display: "flex", alignItems: "center", gap: 7 }}>
+                  <span className="staff-name">{d.name}</span>
+                  <span className="staff-title">{d.title}</span>
+                </span>
+                {d.blurb && <span className="staff-blurb" style={{ display: "block" }}>{d.blurb}</span>}
+                {(d.specialties || []).length > 0 && (
+                  <span className="tags">
+                    {d.specialties.map((sp) => <span key={sp} className="tag">{sp}</span>)}
+                  </span>
+                )}
+              </span>
+              {on && <Check size={17} color={BRASS} />}
+            </button>
+          );
+        })}
+      </div>
+    ),
+    canNext: true,
+  };
+
   const steps = [
     pickWhoStep,
+    ...(entry === "store" ? [pickDesignerStep] : []),
     {
       head: "想做什麼服務？",
       hint: "可以複選，時間會自動加總。不確定的話先選最主要的，到店再討論。",
@@ -1114,7 +1194,7 @@ export default function PublicBookingPage() {
       head: "選一個時間",
       hint: entry === "staff"
         ? "有底色的日子還有位子，日期下方是那天所在的分店。"
-        : "有底色的日子還有位子。選定時段後會顯示由誰服務與實際金額。",
+        : "有底色的日子還有位子，選一個您方便的時段。",
       body: (
         <div className="card">
           <div className="mon-bar">
@@ -1163,19 +1243,39 @@ export default function PublicBookingPage() {
                   ))}
                 </div>
               )}
-              {entry === "store" && startMin !== null && slotStaff && staffById[slotStaff] && (
+              {entry === "store" && startMin !== null && staffId && staffById[staffId] && (
                 <div style={{
                   marginTop: 12, padding: "10px 12px", borderRadius: 9, background: SAGE_LIGHT,
                   fontSize: 12.5, color: SAGE, display: "flex", alignItems: "center", gap: 9,
                 }}>
-                  <Avatar photo={staffById[slotStaff].photo} name={staffById[slotStaff].name} size={30} />
+                  <Avatar photo={staffById[staffId].photo} name={staffById[staffId].name} size={30} />
                   <span>
-                    這個時段由 <strong>{staffById[slotStaff].name}</strong> 為您服務
+                    這個時段由 <strong>{staffById[staffId].name}</strong> 為您服務
                     <br />
                     {(() => {
-                      const t = totalOf(slotStaff);
+                      const t = totalOf(staffId);
                       return t.durationMin + " 分鐘　" + fmtFrom(t.price);
                     })()}
+                  </span>
+                </div>
+              )}
+              {anyStaff && startMin !== null && (
+                <div style={{
+                  marginTop: 12, padding: "10px 12px", borderRadius: 9, background: SAGE_LIGHT,
+                  fontSize: 12.5, color: SAGE, display: "flex", alignItems: "center", gap: 9, lineHeight: 1.6,
+                }}>
+                  <Sparkles size={20} strokeWidth={1.6} style={{ flexShrink: 0 }} />
+                  <span>
+                    不指定設計師。確認預約後，會通知您由哪位設計師服務。
+                    {slotStaff && (
+                      <>
+                        <br />
+                        {(() => {
+                          const t = totalOf(slotStaff);
+                          return "約 " + t.durationMin + " 分鐘　" + fmtFrom(t.price);
+                        })()}
+                      </>
+                    )}
                   </span>
                 </div>
               )}
@@ -1194,7 +1294,7 @@ export default function PublicBookingPage() {
             <div className="summary-row"><span>分店</span><span>{storeById[finalStoreId] ? storeById[finalStoreId].name : "—"}</span></div>
             <div className="summary-row"><span>日期</span><span>{niceDate(date)}</span></div>
             <div className="summary-row"><span>時間</span><span>{toHHMM(startMin)}–{toHHMM(startMin + totalOf(finalStaffId).durationMin)}</span></div>
-            <div className="summary-row"><span>設計師</span><span>{staffById[finalStaffId] ? staffById[finalStaffId].name : "由店家安排"}</span></div>
+            <div className="summary-row"><span>設計師</span><span>{anyStaff ? "不指定（確認後通知）" : (staffById[finalStaffId] ? staffById[finalStaffId].name : "由店家安排")}</span></div>
             <div className="summary-row"><span>服務</span><span>{picks.map((p) => svcLabel(p)).join("、")}</span></div>
             <div className="summary-row"><span>金額</span><span>{fmtFrom(totalOf(finalStaffId).price)}</span></div>
           </div>

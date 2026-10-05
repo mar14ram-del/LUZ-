@@ -12,6 +12,7 @@ import {
   effectiveTier, totalOfPicks, ServiceCatalogEditor,
 } from "./services";
 import { BookingInbox, usePendingRequestCount } from "./booking-admin";
+import { RotationEditor } from "./rotation";
 import { useAutoPublish, SyncIndicator } from "./booking-sync";
 
 const FONT_IMPORT = `@import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap');`;
@@ -739,7 +740,7 @@ function AppointmentForm({ appt, isNew, customers, staff, services, settings, ro
 
 /* ---------- services & settings ---------- */
 
-function ServiceSettings({ services, settings, onSaveServices, onSaveSettings }) {
+function ServiceSettings({ services, settings, designers, onSaveServices, onSaveSettings }) {
   const [list, setList] = useState(services);
   const [cfg, setCfg] = useState(settings);
 
@@ -754,6 +755,11 @@ function ServiceSettings({ services, settings, onSaveServices, onSaveSettings })
       <div>
         <div className="sub-head">服務項目與價目</div>
         <ServiceCatalogEditor services={list} onChange={(next) => { setList(next); onSaveServices(next); }} />
+      </div>
+
+      <div>
+        <div className="sub-head">不指定設計師的排班表</div>
+        <RotationEditor services={list} designers={designers || []} />
       </div>
 
       <div>
@@ -1607,6 +1613,7 @@ export default function SalonAppointmentApp() {
           <ServiceSettings
             services={services}
             settings={settings}
+            designers={allDesigners}
             onSaveServices={(next) => { setServices(next); saveKey(SERVICE_KEY, next); }}
             onSaveSettings={(next) => { setSettings(next); saveKey(SETTINGS_KEY, next); }}
           />
