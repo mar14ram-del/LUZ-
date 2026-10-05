@@ -304,7 +304,8 @@ export function BookingInbox({ appointments, customers, staff, services, roster,
 
     const { error: err } = await supabase
       .from("booking_requests")
-      .update({ status: "approved", handled_at: new Date().toISOString(), matched_customer_id: customerId || null })
+      // appointment_id：讓客人的「我的預約」能讀到你之後在班表改過的時間
+      .update({ status: "approved", handled_at: new Date().toISOString(), matched_customer_id: customerId || null, appointment_id: appt.id })
       .eq("id", req.id);
 
     if (err) {
@@ -440,7 +441,7 @@ export function BookingInbox({ appointments, customers, staff, services, roster,
                     background: req.status === "approved" ? SAGE_LIGHT : "#EFEDE7",
                     color: req.status === "approved" ? SAGE : MUTED,
                   }}>
-                    {req.status === "approved" ? "已確認" : "已退回"}
+                    {req.status === "approved" ? "已確認" : req.status === "cancelled" ? "客人已取消" : "已退回"}
                   </span>
                 )}
                 {req.staff_requested === false ? (

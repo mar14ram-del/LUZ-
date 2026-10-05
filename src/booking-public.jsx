@@ -16,6 +16,7 @@ import { BRAND } from "./stores";
 import {
   Check, ChevronLeft, ChevronRight, Clock, MapPin, Store, Users,
   AlertCircle, Loader2, PartyPopper, Scissors, SquareParking, Pointer, Sparkles,
+  CalendarCheck, Lock, MessageCircle,
 } from "lucide-react";
 
 // LIFF 登入用來讓客人接收預約確認的 LINE 推播。
@@ -26,6 +27,10 @@ const LIFF_ID = import.meta.env.VITE_LIFF_ID || "2011350495-Nsh4G20W";
 // 客人點「用 LINE 登入」時，LINE 會整頁導去登入再導回來，
 // 這段期間先把目前填到一半的預約狀態存起來，導回來後才能接著填，不用重選一次。
 const LIFF_PENDING_KEY = "luz_liff_pending_booking_v1";
+// 首頁的 LINE 登入蒙版：客人按「先不用」後，這次瀏覽（同一個分頁）就不再跳出
+const VEIL_SKIP_KEY = "luz_line_veil_skipped_v1";
+// 官方帳號聊天室（我的預約頁「有問題傳 LINE 給我們」）
+const OA_URL = "https://line.me/R/ti/p/@869brjqy";
 
 const FONT_IMPORT = `@import url('https://fonts.googleapis.com/css2?family=Noto+Serif+TC:wght@600;700&family=Noto+Sans+TC:wght@400;500;600&display=swap');`;
 
@@ -73,6 +78,14 @@ function parkingMapUrl(s) {
   return "https://www.google.com/maps/search/?api=1&query=" +
     encodeURIComponent("停車場 " + s.address);
 }
+
+/* 我的預約的狀態標籤 */
+const MINE_STATUS = {
+  pending: { label: "待確認", bg: "#FBF0D9", fg: "#8A5A00" },
+  confirmed: { label: "已確認", bg: "#E1F1E5", fg: "#2E6B3F" },
+  rejected: { label: "未成立", bg: "#ECEAE4", fg: "#6F6A62" },
+  cancelled_by_salon: { label: "已取消", bg: "#ECEAE4", fg: "#6F6A62" },
+};
 
 const WEEKDAY_ZH = ["日", "一", "二", "三", "四", "五", "六"];
 const FOUND_US_OPTIONS = ["朋友介紹", "Google 地圖", "Instagram", "Facebook", "路過看到", "其他"];
@@ -243,6 +256,14 @@ export default function PublicBookingPage() {
   const [liffBusy, setLiffBusy] = useState(false);
   const [liffError, setLiffError] = useState("");
 
+  // "" | "welcome"（首頁問要不要用 LINE 登入）| "mine"（沒登入卻點了我的預約）
+  const [veil, setVeil] = useState("");
+  // 我的預約：list 為 null 代表還沒讀過
+  const [mine, setMine] = useState({ loading: false, error: "", list: null });
+  const [cancelArmed, setCancelArmed] = useState("");
+  const [cancelBusy, setCancelBusy] = useState("");
+  const [mineFlash, setMineFlash] = useState("");
+
   useEffect(() => {
     (async () => {
       try {
@@ -317,6 +338,11 @@ export default function PublicBookingPage() {
           } catch { /* 復原失敗就算了，客人重填一次也不影響送出 */ }
           const profile = await liff.getProfile();
           setForm((f) => ({ ...f, lineUserId: profile.userId, lineDisplayName: profile.displayName || "" }));
+        } else {
+          // 還沒登入：首頁跳出蒙版問要不要用 LINE 登入（這次瀏覽按過「先不用」就不再跳）
+          let skipped = false;
+          try { skipped = sessionStorage.getItem(VEIL_SKIP_KEY) === "1"; } catch { /* 讀不到就當沒按過 */ }
+          if (!skipped) setVeil((v) => v || "welcome");
         }
       } catch (e) {
         // LIFF 初始化失敗（例如不支援的瀏覽器）就靜默放棄，「用 LINE 登入」按鈕不會顯示，
@@ -326,29 +352,103 @@ export default function PublicBookingPage() {
   }, []);
 
   /** 把目前填到一半的預約狀態存起來，準備讓客人去 LINE 登入再導回來 */
-  function saveStateBeforeLiffRedirect() {
+  function saveStateBeforeLiffRedirect(nextEntry) {
     try {
-      sessionStorage.setItem(LIFF_PENDING_KEY, JSON.stringify({ entry, step, storeId, staffId, picks, date, startMin, form }));
+      sessionStorage.setItem(LIFF_PENDING_KEY, JSON.stringify({
+        entry: nextEntry || entry, step, storeId, staffId, picks, date, startMin, form,
+      }));
     } catch { /* 存不起來就算了，最多是導回來要重填 */ }
   }
 
-  async function handleLineLogin() {
+  /** nextEntry = "mine" 時，登入後直接進「我的預約」。按鈕直接綁 onClick 時第一個參數是事件，不影響。 */
+  async function handleLineLogin(_evt, nextEntry) {
     setLiffError("");
     setLiffBusy(true);
     try {
       if (!liff.isLoggedIn()) {
-        saveStateBeforeLiffRedirect();
+        saveStateBeforeLiffRedirect(nextEntry);
         liff.login({ redirectUri: window.location.href });
         return; // 頁面即將整頁導離，不會執行到下面
       }
       const profile = await liff.getProfile();
       setForm((f) => ({ ...f, lineUserId: profile.userId, lineDisplayName: profile.displayName || "" }));
+      setVeil("");
+      if (nextEntry) setEntry(nextEntry);
     } catch (e) {
       setLiffError("LINE 登入時發生問題，請稍後再試，或直接留下手機號碼讓我們與您聯繫。");
     } finally {
       setLiffBusy(false);
     }
   }
+
+  function skipVeil() {
+    try { sessionStorage.setItem(VEIL_SKIP_KEY, "1"); } catch { /* 存不起來就只有這次關掉 */ }
+    setVeil("");
+  }
+
+  /* ----- 我的預約（資料由 my-bookings 函式驗證 LINE 身分後才給，只看得到自己的） ----- */
+
+  function lineAccessToken() {
+    try { return liff.getAccessToken(); } catch { return null; }
+  }
+
+  /** 呼叫 my-bookings；失敗時把函式回的中文原因撈出來 */
+  async function callMyBookings(payload) {
+    const accessToken = lineAccessToken();
+    if (!accessToken) return { ok: false, error: "請先用 LINE 登入" };
+    try {
+      const { data, error } = await supabase.functions.invoke("my-bookings", { body: { ...payload, accessToken } });
+      if (!error && data && data.ok) return data;
+      let msg = (data && data.error) || "";
+      if (!msg && error && error.context && typeof error.context.json === "function") {
+        try { const b = await error.context.json(); msg = b && b.error; } catch { /* 撈不到就用預設訊息 */ }
+      }
+      return { ok: false, error: msg || "連線有問題，請稍後再試。" };
+    } catch (e) {
+      return { ok: false, error: "連線有問題，請稍後再試。" };
+    }
+  }
+
+  async function loadMine() {
+    if (!lineAccessToken()) return;
+    setMine((m) => ({ ...m, loading: true, error: "" }));
+    const r = await callMyBookings({ action: "list" });
+    if (r.ok) setMine({ loading: false, error: "", list: r.bookings || [] });
+    else setMine({ loading: false, error: r.error, list: null });
+  }
+
+  async function cancelBooking(b) {
+    // 第一次按只是「確定要取消嗎？」，4 秒內再按一次才真的取消
+    if (cancelArmed !== b.id) {
+      setCancelArmed(b.id);
+      setTimeout(() => setCancelArmed((x) => (x === b.id ? "" : x)), 4000);
+      return;
+    }
+    setCancelArmed("");
+    setCancelBusy(b.id);
+    setMineFlash("");
+    const r = await callMyBookings({ action: "cancel", id: b.id });
+    setCancelBusy("");
+    setMineFlash(r.ok
+      ? "已取消 " + niceDate(b.date) + " " + toHHMM(b.startMin) + " 的預約。"
+      : "取消失敗：" + r.error);
+    loadMine();
+  }
+
+  function openMine() {
+    if (form.lineUserId) { setEntry("mine"); return; }
+    setVeil("mine");
+  }
+
+  // 登入後先讀一次，首頁的「我的預約」才能顯示下一次預約；進到我的預約頁時再重讀
+  useEffect(() => {
+    if (form.lineUserId) loadMine();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [form.lineUserId]);
+  useEffect(() => {
+    if (entry === "mine" && form.lineUserId) loadMine();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [entry]);
 
   const stores = (config && config.stores) || [];
   const designers = (config && config.designers) || [];
@@ -849,6 +949,50 @@ export default function PublicBookingPage() {
       .center-state { text-align: center; padding: 60px 20px; color: ${MUTED}; font-size: 14px; line-height: 1.8; }
       @keyframes spin { to { transform: rotate(360deg); } }
       .spin { animation: spin 1s linear infinite; }
+
+      /* LINE 登入的霧面蒙版 */
+      .veil {
+        position: fixed; inset: 0; z-index: 50; display: flex; align-items: center; justify-content: center;
+        padding: 24px; background: rgba(239, 237, 231, 0.5);
+        -webkit-backdrop-filter: blur(10px) saturate(1.15); backdrop-filter: blur(10px) saturate(1.15);
+        animation: veil-in 0.22s ease-out;
+      }
+      @keyframes veil-in { from { opacity: 0; } to { opacity: 1; } }
+      .veil-card {
+        width: 100%; max-width: 360px; text-align: center; border-radius: 20px; padding: 26px 22px 16px;
+        background: rgba(255, 255, 255, 0.86); border: 1px solid rgba(255, 255, 255, 0.8);
+        box-shadow: 0 24px 50px -22px rgba(20, 40, 80, 0.5);
+      }
+      .veil-ico { width: 56px; height: 56px; border-radius: 50%; margin: 0 auto; display: flex; align-items: center; justify-content: center; }
+      .veil-t { font-family: ${SERIF}; font-size: 19px; font-weight: 700; color: ${INK}; margin-top: 12px; }
+      .veil-s { font-size: 13px; color: ${MUTED}; line-height: 1.7; margin-top: 6px; }
+      .veil-list { display: inline-block; text-align: left; font-size: 13.5px; color: ${INK}; line-height: 2; margin-top: 10px; }
+      .veil-list div { display: flex; align-items: center; gap: 7px; }
+      .btn-line {
+        width: 100%; margin-top: 18px; display: flex; align-items: center; justify-content: center; gap: 8px;
+        background: #06C755; color: #FFFFFF; border: none; border-radius: 12px; padding: 13px 14px;
+        font-family: ${SANS}; font-size: 15px; font-weight: 600; cursor: pointer;
+      }
+      .btn-line:disabled { opacity: 0.6; cursor: default; }
+      .veil-skip { margin-top: 8px; background: none; border: none; color: ${MUTED}; font-family: ${SANS}; font-size: 13px; padding: 8px; cursor: pointer; }
+
+      .line-chip {
+        position: absolute; top: 14px; right: 16px; z-index: 2; display: inline-flex; align-items: center; gap: 5px;
+        font-size: 11.5px; color: #FFFFFF; background: rgba(255, 255, 255, 0.18); padding: 4px 10px; border-radius: 999px;
+      }
+
+      /* 我的預約 */
+      .mine-card { background: #FFFFFF; border-radius: 14px; padding: 14px 15px; margin-bottom: 12px; box-shadow: ${liftOf(SKY)}; }
+      .mine-when { font-family: ${SERIF}; font-size: 16.5px; font-weight: 700; color: ${INK}; }
+      .mine-badge { font-size: 11.5px; font-weight: 600; padding: 3px 10px; border-radius: 999px; white-space: nowrap; }
+      .mine-meta { font-size: 13px; color: ${MUTED}; line-height: 1.8; margin-top: 6px; }
+      .mine-actions { display: flex; gap: 8px; margin-top: 12px; padding-top: 10px; border-top: 1px dashed ${PAPER_LINE}; flex-wrap: wrap; }
+      .mine-link { font-size: 13px; color: ${INDIGO}; text-decoration: none; display: inline-flex; align-items: center; gap: 5px; padding: 6px 2px; }
+      .mine-cancel {
+        margin-left: auto; font-family: ${SANS}; font-size: 13px; padding: 7px 14px; border-radius: 9px; cursor: pointer;
+        background: #FFFFFF; color: ${WINE}; border: 1px solid ${WINE_LIGHT};
+      }
+      .mine-cancel-armed { background: ${WINE}; color: #FFFFFF; border-color: ${WINE}; }
     `}</style>
   );
 
@@ -902,6 +1046,12 @@ export default function PublicBookingPage() {
         <div style={{ fontSize: 12, color: MUTED, lineHeight: 1.7, padding: "0 2px" }}>
           {PRICE_NOTE}
         </div>
+        {form.lineUserId && (
+          <button className="btn btn-main" style={{ width: "100%", marginTop: 16 }}
+            onClick={() => { setDone(false); chooseEntry("mine"); }}>
+            <CalendarCheck size={16} /> 查看我的預約
+          </button>
+        )}
       </div>
     </div>;
   }
@@ -909,11 +1059,43 @@ export default function PublicBookingPage() {
   /* ----- 入口選擇 ----- */
 
   if (!entry) {
+    const loggedIn = !!form.lineUserId;
+    const nextBooking = (mine.list || []).find((b) => b.status === "pending" || b.status === "confirmed");
+    const mineCard = (
+      <button className="entry-card" onClick={openMine}>
+        <span className="entry-ico" style={loggedIn ? { background: INDIGO, color: "#FFFFFF" } : undefined}>
+          <CalendarCheck size={22} strokeWidth={1.6} />
+        </span>
+        <span className="entry-text">
+          <span className="entry-t">我的預約</span>
+          <span className="entry-s">
+            {!loggedIn
+              ? "查看預約內容與時間（需用 LINE 登入）"
+              : mine.loading && !mine.list
+                ? "讀取中…"
+                : nextBooking
+                  ? "下一次：" + niceDate(nextBooking.date) + " " + toHHMM(nextBooking.startMin) + (nextBooking.storeName ? "　" + nextBooking.storeName : "")
+                  : "目前沒有即將到來的預約"}
+          </span>
+        </span>
+        {loggedIn && nextBooking && MINE_STATUS[nextBooking.status] ? (
+          <span className="mine-badge" style={{ marginLeft: "auto", background: MINE_STATUS[nextBooking.status].bg, color: MINE_STATUS[nextBooking.status].fg }}>
+            {MINE_STATUS[nextBooking.status].label}
+          </span>
+        ) : (
+          <span style={{ marginLeft: "auto" }}><ChevronRight size={18} color="#A6B4C7" /></span>
+        )}
+      </button>
+    );
+
     return <div className="bk-wrap">{styleTag}
       <div className="bk-inner">
         <div className="bk-head bk-head-hero">
           <Motif className="head-motif head-motif-a" />
           <Motif className="head-motif head-motif-b" round />
+          {loggedIn && (
+            <span className="line-chip"><MessageCircle size={12} /> {form.lineDisplayName || "已用 LINE 登入"}</span>
+          )}
           <div className="bk-eyebrow">LUZ STYLE</div>
           <div className="bk-brand">
             <Motif className="bk-mark" />
@@ -922,11 +1104,13 @@ export default function PublicBookingPage() {
           <div className="bk-sub">{config.notice}</div>
         </div>
 
+        {loggedIn && mineCard}
+
         <button className="entry-card" onClick={() => chooseEntry("store")}>
           <span className="entry-ico"><Store size={22} strokeWidth={1.6} /></span>
           <span className="entry-text">
             <span className="entry-t">依分店預約</span>
-            <span className="entry-s">先選店，再看那天有哪些設計師</span>
+            <span className="entry-s">先選店，再選設計師或不指定</span>
           </span>
           <span style={{ marginLeft: "auto" }}><ChevronRight size={18} color="#A6B4C7" /></span>
         </button>
@@ -938,6 +1122,8 @@ export default function PublicBookingPage() {
           </span>
           <span style={{ marginLeft: "auto" }}><ChevronRight size={18} color="#A6B4C7" /></span>
         </button>
+
+        {!loggedIn && liffReady && mineCard}
 
         {/* 各店位置與停車資訊 —— 整張卡不可點，只有店址與停車場兩行是連結 */}
         <div className="sec-title">各店位置與停車資訊</div>
@@ -979,6 +1165,144 @@ export default function PublicBookingPage() {
             </div>
           );
         })}
+      </div>
+
+      {veil && !loggedIn && (
+        <div className="veil">
+          <div className="veil-card" role="dialog" aria-modal="true">
+            {veil === "welcome" ? (
+              <>
+                <div className="veil-ico" style={{ background: "#E3F7EA", color: "#06C755" }}>
+                  <MessageCircle size={28} strokeWidth={1.8} />
+                </div>
+                <div className="veil-t">要用 LINE 登入嗎？</div>
+                <div className="veil-list">
+                  <div><Check size={15} color="#06C755" /> 預約確認會直接傳到你的 LINE</div>
+                  <div><Check size={15} color="#06C755" /> 隨時在「我的預約」查看、取消</div>
+                  <div><Check size={15} color="#06C755" /> 不用再另外留 LINE ID</div>
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="veil-ico" style={{ background: BRASS_LIGHT, color: INDIGO }}>
+                  <Lock size={26} strokeWidth={1.8} />
+                </div>
+                <div className="veil-t">查看預約要先登入</div>
+                <div className="veil-s">用 LINE 登入後，只會看到你自己的預約。</div>
+              </>
+            )}
+            <button className="btn-line" disabled={liffBusy}
+              onClick={() => handleLineLogin(null, veil === "mine" ? "mine" : undefined)}>
+              {liffBusy ? <Loader2 size={17} className="spin" /> : <MessageCircle size={18} />} 用 LINE 登入
+            </button>
+            {liffError && <div style={{ fontSize: 12.5, color: WINE, marginTop: 8, lineHeight: 1.6 }}>{liffError}</div>}
+            <button className="veil-skip" onClick={veil === "welcome" ? skipVeil : () => setVeil("")}>
+              {veil === "welcome" ? "先不用，直接預約" : "取消"}
+            </button>
+          </div>
+        </div>
+      )}
+    </div>;
+  }
+
+  /* ----- 我的預約 ----- */
+
+  if (entry === "mine") {
+    const list = mine.list || [];
+    return <div className="bk-wrap">{styleTag}
+      <div className="bk-inner">
+        <div className="bk-head">
+          <Motif className="head-motif head-motif-c" />
+          <div className="bk-brand">
+            <Motif className="bk-mark" />
+            <div className="bk-title">我的預約</div>
+          </div>
+          <div className="bk-sub">
+            {form.lineDisplayName ? form.lineDisplayName + "　·　" : ""}即將到來的預約
+          </div>
+        </div>
+
+        {mineFlash && (
+          <div className="note-band" style={{ marginBottom: 12 }}>
+            <AlertCircle size={15} style={{ flexShrink: 0, marginTop: 1 }} />{mineFlash}
+          </div>
+        )}
+
+        {!form.lineUserId ? (
+          <div className="card" style={{ textAlign: "center", color: MUTED, fontSize: 13.5, lineHeight: 1.8 }}>
+            需要先用 LINE 登入才能查看預約。
+            <button className="btn-line" onClick={() => handleLineLogin(null, "mine")} disabled={liffBusy}>
+              <MessageCircle size={18} /> 用 LINE 登入
+            </button>
+          </div>
+        ) : mine.loading && !mine.list ? (
+          <div className="center-state"><Loader2 size={22} className="spin" /><br />讀取預約中…</div>
+        ) : mine.error ? (
+          <div className="card" style={{ color: WINE, fontSize: 13.5, lineHeight: 1.7 }}>
+            {mine.error}
+            <div><button className="btn" style={{ marginTop: 10 }} onClick={loadMine}>再試一次</button></div>
+          </div>
+        ) : list.length === 0 ? (
+          <div className="card" style={{ textAlign: "center", color: MUTED, fontSize: 13.5, lineHeight: 1.8 }}>
+            目前沒有即將到來的預約。
+            <br />
+            <span style={{ fontSize: 12 }}>只會顯示用這個 LINE 帳號登入後送出的預約。</span>
+          </div>
+        ) : list.map((b) => {
+          const st = MINE_STATUS[b.status] || MINE_STATUS.pending;
+          const store = storeById[b.storeId];
+          const armed = cancelArmed === b.id;
+          return (
+            <div key={b.id} className="mine-card">
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10 }}>
+                <div className="mine-when">
+                  {niceDate(b.date)}
+                  <div style={{ fontSize: 15 }}>{toHHMM(b.startMin)}–{toHHMM(b.startMin + b.durationMin)}</div>
+                </div>
+                <span className="mine-badge" style={{ background: st.bg, color: st.fg }}>{st.label}</span>
+              </div>
+              <div className="mine-meta">
+                {b.storeName || "—"}
+                {"　·　"}
+                {b.staffName ? "設計師 " + b.staffName : (b.staffRequested ? "設計師由店家安排" : "不指定設計師（確認後通知）")}
+                <br />
+                {b.services}{b.price ? "　" + fmtFrom(b.price) : ""}
+                {b.status === "rejected" && (
+                  <div style={{ color: WINE, fontSize: 12.5 }}>這個時段沒辦法安排，歡迎改約其他時間或傳 LINE 給我們。</div>
+                )}
+              </div>
+              {(store || b.canCancel) && (
+                <div className="mine-actions">
+                  {store && store.address && (
+                    <a className="mine-link" href={storeMapUrl(store)} target="_blank" rel="noreferrer">
+                      <MapPin size={14} /> 導航到店
+                    </a>
+                  )}
+                  {b.canCancel && (
+                    <button className={"mine-cancel" + (armed ? " mine-cancel-armed" : "")}
+                      disabled={cancelBusy === b.id} onClick={() => cancelBooking(b)}>
+                      {cancelBusy === b.id ? "取消中…" : armed ? "確定要取消？再按一次" : "取消預約"}
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
+          );
+        })}
+
+        <a className="mine-link" href={OA_URL} target="_blank" rel="noreferrer" style={{ marginTop: 4 }}>
+          <MessageCircle size={14} /> 想改時間或有問題，傳 LINE 給我們
+        </a>
+      </div>
+
+      <div className="navbar">
+        <button className="btn" onClick={() => { setMineFlash(""); setEntry(""); }}>
+          <ChevronLeft size={16} /> 回首頁
+        </button>
+        <div style={{ flex: 1 }} />
+        <button className="btn btn-main" onClick={() => { setMineFlash(""); chooseEntry("store"); }}>
+          再預約一次 <ChevronRight size={16} />
+        </button>
       </div>
     </div>;
   }

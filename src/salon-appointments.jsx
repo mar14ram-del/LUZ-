@@ -12,6 +12,7 @@ import {
   effectiveTier, totalOfPicks, ServiceCatalogEditor,
 } from "./services";
 import { BookingInbox, usePendingRequestCount } from "./booking-admin";
+import { supabase } from "./supabaseClient";
 import { RotationEditor } from "./rotation";
 import { useAutoPublish, SyncIndicator } from "./booking-sync";
 
@@ -1144,6 +1145,35 @@ export default function SalonAppointmentApp() {
 
   useEffect(() => { if (loaded) saveKey(APPT_KEY, appts); }, [appts, loaded]);
 
+  // 客人在「我的預約」自行取消已確認的預約時，資料庫只會標記那筆申請；
+  // 由這裡把班表上對應的預約改成「已取消」（班表只由後台寫入，避免兩邊互相覆蓋）。
+  const [cancelNotices, setCancelNotices] = useState([]);
+  useEffect(() => {
+    if (!loaded) return;
+    let stopped = false;
+    async function syncCustomerCancels() {
+      const { data, error } = await supabase
+        .from("booking_requests")
+        .select("id, appointment_id, customer_name, req_date, start_min, store_name")
+        .eq("status", "cancelled")
+        .eq("cancel_synced", false);
+      if (stopped || error || !data || data.length === 0) return;
+      const apptIds = new Set(data.map((r) => r.appointment_id).filter(Boolean));
+      if (apptIds.size > 0) {
+        setAppts((prev) => prev.map((a) => (
+          apptIds.has(a.id) && a.status !== "cancelled"
+            ? { ...a, status: "cancelled", note: [a.note, "客人於線上「我的預約」自行取消"].filter(Boolean).join("\n") }
+            : a
+        )));
+      }
+      await supabase.from("booking_requests").update({ cancel_synced: true }).in("id", data.map((r) => r.id));
+      if (!stopped) setCancelNotices((prev) => [...prev, ...data]);
+    }
+    syncCustomerCancels();
+    const t = setInterval(syncCustomerCancels, 180000);
+    return () => { stopped = true; clearInterval(t); };
+  }, [loaded]);
+
   const customerMap = useMemo(() => {
     const m = {};
     customers.forEach((c) => { m[c.id] = c; });
@@ -1438,6 +1468,27 @@ export default function SalonAppointmentApp() {
           <div style={{ fontFamily: "'Fraunces', serif", fontSize: 24, fontWeight: 700 }}>{BRAND} · 預約管理</div>
           <button className="ledger-btn" onClick={() => setShowSettings(true)}><Settings size={14} /> 服務與設定</button>
         </div>
+
+        {cancelNotices.length > 0 && (
+          <div style={{
+            display: "flex", gap: 10, alignItems: "flex-start", background: WINE_LIGHT, color: WINE,
+            border: "1px solid " + WINE, borderRadius: 9, padding: "10px 12px", fontSize: 13, lineHeight: 1.7, marginBottom: 14,
+          }}>
+            <AlertTriangle size={16} style={{ flexShrink: 0, marginTop: 3 }} />
+            <div style={{ flex: 1 }}>
+              客人在線上自行取消了 {cancelNotices.length} 筆預約，班表上已自動改成「已取消」：
+              <div style={{ color: INK }}>
+                {cancelNotices.map((r) => (
+                  <div key={r.id}>
+                    {r.customer_name}　{r.req_date}（{WEEKDAY_ZH[new Date(r.req_date + "T00:00:00").getDay()]}）{toHHMM(r.start_min)}
+                    {r.store_name ? "　" + r.store_name : ""}
+                  </div>
+                ))}
+              </div>
+            </div>
+            <button className="ledger-btn" style={{ fontSize: 12 }} onClick={() => setCancelNotices([])}>知道了</button>
+          </div>
+        )}
 
         <div className="stat-strip">
           <div className="stat-item">
