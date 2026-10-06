@@ -951,6 +951,13 @@ function DailyClosingView({ transactions, closings, storeFilter, onSave }) {
   const cashOut = dayTx.filter((t) => t.type === "expense" && t.paymentMethod === "現金").reduce((s, t) => s + t.amount, 0);
   const totalIncome = dayTx.filter((t) => t.type === "income").reduce((s, t) => s + t.amount, 0);
   const totalExpense = dayTx.filter((t) => t.type === "expense").reduce((s, t) => s + t.amount, 0);
+  // 當日收入依付款方式拆開，方便對刷卡機、行動支付後台、銀行存摺
+  const incomeByMethod = PAYMENT_METHODS.map((m) => ({
+    method: m,
+    amount: dayTx.filter((t) => t.type === "income" && t.paymentMethod === m).reduce((s, t) => s + t.amount, 0),
+  }));
+  // 舊資料可能沒填付款方式，另外列出來，各行加起來才會等於當日收入
+  const incomeOther = totalIncome - incomeByMethod.reduce((s, x) => s + x.amount, 0);
   const openingNum = parseFloat(opening) || 0;
   const expectedCash = openingNum + cashIn - cashOut;
   const countedNum = parseFloat(counted) || 0;
@@ -994,10 +1001,22 @@ function DailyClosingView({ transactions, closings, storeFilter, onSave }) {
         </label>
 
         <div style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 13, color: MUTED, background: PAPER, borderRadius: 8, padding: 12 }}>
-          <div style={{ display: "flex", justifyContent: "space-between" }}><span>當日收入</span><span style={{ fontFamily: "IBM Plex Mono", color: SAGE }}>{fmtMoney(totalIncome)}</span></div>
-          <div style={{ display: "flex", justifyContent: "space-between" }}><span>當日支出</span><span style={{ fontFamily: "IBM Plex Mono", color: WINE }}>{fmtMoney(totalExpense)}</span></div>
-          <div style={{ display: "flex", justifyContent: "space-between" }}><span>現金收入</span><span style={{ fontFamily: "IBM Plex Mono" }}>{fmtMoney(cashIn)}</span></div>
-          <div style={{ display: "flex", justifyContent: "space-between" }}><span>現金支出</span><span style={{ fontFamily: "IBM Plex Mono" }}>{fmtMoney(cashOut)}</span></div>
+          <div style={{ display: "flex", justifyContent: "space-between", color: INK, fontWeight: 600 }}><span>當日收入</span><span style={{ fontFamily: "IBM Plex Mono", color: SAGE }}>{fmtMoney(totalIncome)}</span></div>
+          {incomeByMethod.map((x) => (
+            <div key={x.method} style={{ display: "flex", justifyContent: "space-between", paddingLeft: 14 }}>
+              <span>{x.method}</span>
+              <span style={{ fontFamily: "IBM Plex Mono", color: x.amount ? INK : MUTED }}>{fmtMoney(x.amount)}</span>
+            </div>
+          ))}
+          {incomeOther !== 0 && (
+            <div style={{ display: "flex", justifyContent: "space-between", paddingLeft: 14 }}>
+              <span>未填付款方式</span>
+              <span style={{ fontFamily: "IBM Plex Mono", color: INK }}>{fmtMoney(incomeOther)}</span>
+            </div>
+          )}
+          <div style={{ borderTop: "1px dashed " + PAPER_LINE, margin: "4px 0" }} />
+          <div style={{ display: "flex", justifyContent: "space-between", color: INK, fontWeight: 600 }}><span>當日支出</span><span style={{ fontFamily: "IBM Plex Mono", color: WINE }}>{fmtMoney(totalExpense)}</span></div>
+          <div style={{ display: "flex", justifyContent: "space-between", paddingLeft: 14 }}><span>其中現金支出</span><span style={{ fontFamily: "IBM Plex Mono" }}>{fmtMoney(cashOut)}</span></div>
         </div>
 
         <label className="field-label">今日開店現金（零用金）<input type="number" className="ledger-input" value={opening} onChange={(e) => setOpening(e.target.value)} placeholder="0" /></label>
