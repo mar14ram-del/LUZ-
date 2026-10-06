@@ -85,7 +85,12 @@ function groupTx(list) {
       order.push(gid);
     }
     const g = map.get(gid);
-    g.items.push({ id: t.id, category: t.category, amount: t.amount });
+    // stockTracked：這筆有沒有記下扣了哪個商品（舊資料沒有，刪除或修改時無法自動回補庫存）
+    g.items.push({
+      id: t.id, category: t.category, amount: t.amount,
+      materialId: t.materialId || "", qty: Number(t.qty) || 0,
+      stockTracked: Object.prototype.hasOwnProperty.call(t, "materialId"),
+    });
     g.amount += t.amount;
   });
   return order.map((gid) => map.get(gid));
@@ -136,6 +141,36 @@ function defaultRowFor(category, priceChips) {
     amount: lowest ? String(lowest.price) : "",
     chipId: lowest ? lowest.id : "", addonIds: [],
   };
+}
+
+/**
+ * 表單的一列 → 一筆交易。
+ * 產品銷售會記下扣了哪個商品、幾個，之後刪除或修改時才能把庫存加回去。
+ * r.legacy = 舊資料（當初沒記扣了哪個商品），維持原樣、不動庫存。
+ */
+function buildTx(r, meta, groupId, id) {
+  const tx = {
+    id, groupId, type: meta.type, date: meta.date, category: r.category, amount: r.amount,
+    note: meta.note, paymentMethod: meta.paymentMethod, staffId: meta.staffId,
+    storeId: meta.storeId || "",
+  };
+  if (meta.type === "income" && r.category === "產品銷售" && !r.legacy) {
+    tx.materialId = r.materialId || "";
+    tx.qty = r.materialId ? (parseFloat(r.qty) || 0) : 0;
+  }
+  return tx;
+}
+
+/** 從舊交易換成新交易時，各物料庫存要變動多少：舊的加回、新的扣掉 */
+function stockDelta(oldTxs, newTxs) {
+  const d = {};
+  oldTxs.forEach((t) => {
+    if (t.materialId && Number(t.qty) > 0) d[t.materialId] = (d[t.materialId] || 0) + Number(t.qty);
+  });
+  newTxs.forEach((t) => {
+    if (t.materialId && Number(t.qty) > 0) d[t.materialId] = (d[t.materialId] || 0) - Number(t.qty);
+  });
+  return d;
 }
 
 function StatCard({ label, value, tone, icon }) {
@@ -428,7 +463,151 @@ function TxForm({ onAdd, staff, materials, defaultStoreId, incomeCats, priceChip
   );
 }
 
-function GroupRow({ g, staff, onDelete }) {
+/** 記帳列表裡，修改一整筆（共用欄位 + 每個品項） */
+function GroupEditForm({ g, staff, materials, incomeCats, allTransactions, onSave, onCancel }) {
+  const isIncome = g.type === "income";
+  const baseCats = isIncome ? (incomeCats && incomeCats.length ? incomeCats : FALLBACK_INCOME) : EXPENSE_CATEGORIES;
+  const [date, setDate] = useState(g.date);
+  const [storeId, setStoreId] = useState(g.storeId || STORES[0].id);
+  const [payment, setPayment] = useState(g.paymentMethod || PAYMENT_METHODS[0]);
+  const [staffId, setStaffId] = useState(g.staffId || "");
+  const [note, setNote] = useState(g.note || "");
+  const [rows, setRows] = useState(() => g.items.map((i) => ({
+    key: i.id, txId: i.id, category: i.category, amount: String(i.amount),
+    materialId: i.materialId || "", qty: String(i.qty || 1),
+    legacy: i.category === "產品銷售" && !i.stockTracked,
+  })));
+  const [error, setError] = useState("");
+
+  const catsFor = (cur) => (baseCats.includes(cur) ? baseCats : [...baseCats, cur]);
+  function upd(key, patch) { setRows((p) => p.map((r) => (r.key === key ? { ...r, ...patch } : r))); }
+  function removeRow(key) { setRows((p) => p.filter((r) => r.key !== key)); }
+  function addRow() {
+    setRows((p) => [...p, { key: uid(), txId: "", category: baseCats[0], amount: "", materialId: "", qty: "1", legacy: false }]);
+  }
+
+  const total = rows.reduce((sum, r) => sum + (parseFloat(r.amount) || 0), 0);
+
+  // 原本或改過後的設計師，那個月已經結算過薪資的話提醒一下
+  const settledWarn = (() => {
+    if (!isIncome) return "";
+    const names = [];
+    [[g.staffId, g.date], [staffId, date]].forEach(([sid, d]) => {
+      const s = staff.find((x) => x.id === sid);
+      if (!s || !d) return;
+      const key = "薪資結算：" + s.name + " " + monthKey(d);
+      if ((allTransactions || []).some((t) => t.type === "expense" && t.note === key) && !names.includes(s.name)) names.push(s.name);
+    });
+    return names.length ? names.join("、") + " 這個月的薪資已經結算過，修改後抽成不會自動補發或扣回。" : "";
+  })();
+
+  function save() {
+    const valid = rows
+      .map((r) => ({ ...r, amount: parseFloat(r.amount) || 0, qty: parseFloat(r.qty) || 0 }))
+      .filter((r) => r.amount > 0);
+    if (valid.length === 0) {
+      setError("至少要留一個金額大於 0 的品項；整筆不要了請用垃圾桶刪除。");
+      return;
+    }
+    onSave(valid, {
+      date, storeId, paymentMethod: payment,
+      staffId: isIncome ? (staffId || null) : null, note: note.trim(),
+    });
+  }
+
+  return (
+    <div className="ledger-row" style={{ display: "block", background: "#FFFDF8", borderLeft: "3px solid " + BRASS, borderRadius: 0 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: "0 10px" }}>
+        <label className="field-label">日期
+          <input type="date" className="ledger-input" value={date} onChange={(e) => setDate(e.target.value)} />
+        </label>
+        <label className="field-label">分店
+          <select className="ledger-input" value={storeId} onChange={(e) => setStoreId(e.target.value)}>
+            {STORES.map((st) => <option key={st.id} value={st.id}>{st.name}</option>)}
+          </select>
+        </label>
+        <label className="field-label">付款方式
+          <select className="ledger-input" value={payment} onChange={(e) => setPayment(e.target.value)}>
+            {(PAYMENT_METHODS.includes(payment) ? PAYMENT_METHODS : [...PAYMENT_METHODS, payment]).map((p) => <option key={p} value={p}>{p}</option>)}
+          </select>
+        </label>
+        {isIncome && (
+          <label className="field-label">服務員工
+            <select className="ledger-input" value={staffId} onChange={(e) => setStaffId(e.target.value)}>
+              <option value="">— 不指定 —</option>
+              {staff.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+            </select>
+          </label>
+        )}
+      </div>
+      <label className="field-label">備註
+        <input className="ledger-input" value={note} onChange={(e) => setNote(e.target.value)} placeholder="例如：客人姓名、品項細節" />
+      </label>
+
+      <div style={{ fontSize: 12, color: MUTED, margin: "2px 0 6px" }}>品項（每一項都可以單獨改）</div>
+      {rows.map((r) => (
+        <div key={r.key} style={{ background: PAPER, borderRadius: 8, padding: 8, marginBottom: 6, display: "flex", flexDirection: "column", gap: 6 }}>
+          <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+            <select className="ledger-input" style={{ flex: 1, minWidth: 0 }} value={r.category}
+              onChange={(e) => upd(r.key, { category: e.target.value, legacy: false, materialId: "" })}>
+              {catsFor(r.category).map((c) => <option key={c} value={c}>{c}</option>)}
+            </select>
+            <input className="ledger-input" style={{ width: 110 }} type="number" min="0" placeholder="金額"
+              value={r.amount} onChange={(e) => upd(r.key, { amount: e.target.value })} />
+            <button type="button" className="ledger-icon-btn" onClick={() => removeRow(r.key)} aria-label="刪除這個品項" title="刪除這個品項">
+              <X size={14} />
+            </button>
+          </div>
+          {isIncome && r.category === "產品銷售" && (r.legacy ? (
+            <div style={{ fontSize: 11.5, color: MUTED, lineHeight: 1.6 }}>
+              這是舊紀錄，當初沒記下賣了哪個商品，刪除或修改這一項不會自動調整庫存。
+            </div>
+          ) : materials.length > 0 && (
+            <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+              <select className="ledger-input" style={{ flex: 1, minWidth: 0 }} value={r.materialId}
+                onChange={(e) => upd(r.key, { materialId: e.target.value })}>
+                <option value="">— 不扣庫存 —</option>
+                {materials.map((m) => <option key={m.id} value={m.id}>{m.name}（庫存 {m.stock}{m.unit}）</option>)}
+              </select>
+              {r.materialId && (
+                <input className="ledger-input" style={{ width: 70 }} type="number" min="0" step="1" placeholder="數量"
+                  value={r.qty} onChange={(e) => upd(r.key, { qty: e.target.value })} />
+              )}
+            </div>
+          ))}
+        </div>
+      ))}
+      <button type="button" className="ledger-btn" style={{ fontSize: 12 }} onClick={addRow}>
+        <Plus size={13} /> 加一個品項
+      </button>
+
+      {settledWarn && (
+        <div style={{ fontSize: 12.5, background: BRASS_LIGHT, color: BRASS, padding: "7px 10px", borderRadius: 7, marginTop: 10, lineHeight: 1.6 }}>
+          {settledWarn}
+        </div>
+      )}
+      {error && <div style={{ color: WINE, fontSize: 13, marginTop: 8 }}>{error}</div>}
+
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 12, paddingTop: 10, borderTop: "1px solid " + PAPER_LINE, flexWrap: "wrap" }}>
+        <span style={{ fontSize: 13, color: MUTED }}>合計</span>
+        <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontWeight: 600, fontSize: 17, color: isIncome ? SAGE : WINE }}>{fmtMoney(total)}</span>
+        <div style={{ flex: 1 }} />
+        <button type="button" className="ledger-btn" onClick={onCancel}>取消</button>
+        <button type="button" className="ledger-btn ledger-btn-primary" onClick={save}><Check size={14} /> 儲存修改</button>
+      </div>
+    </div>
+  );
+}
+
+function GroupRow({ g, staff, onDelete, onEdit, editCtx }) {
+  const [editing, setEditing] = useState(false);
+  if (editing && onEdit) {
+    return (
+      <GroupEditForm g={g} staff={staff} {...editCtx}
+        onCancel={() => setEditing(false)}
+        onSave={(rows, meta) => { onEdit(g.groupId, rows, meta); setEditing(false); }} />
+    );
+  }
   const s = staff.find((x) => x.id === g.staffId);
   const isIncome = g.type === "income";
   const label = g.items.map((i) => i.category).join("、");
@@ -462,12 +641,17 @@ function GroupRow({ g, staff, onDelete }) {
       }}>
         {isIncome ? "+" : "-"}{fmtMoney(g.amount).replace("NT$", "")}
       </div>
+      {onEdit && (
+        <button className="ledger-icon-btn" onClick={() => setEditing(true)} aria-label="編輯" title="編輯這筆">
+          <Pencil size={15} />
+        </button>
+      )}
       <ConfirmDelete onConfirm={() => onDelete(g.groupId)} />
     </div>
   );
 }
 
-function LedgerView({ transactions, staff, materials, defaultStoreId, incomeCats, priceChips, onAdd, onDelete }) {
+function LedgerView({ transactions, allTransactions, staff, materials, defaultStoreId, incomeCats, priceChips, onAdd, onDelete, onUpdate }) {
   const [filterType, setFilterType] = useState("all");
   const [filterMonth, setFilterMonth] = useState(monthKey(todayStr()));
 
@@ -507,7 +691,10 @@ function LedgerView({ transactions, staff, materials, defaultStoreId, incomeCats
           {grouped.length === 0 ? (
             <div style={{ padding: 32, textAlign: "center", color: MUTED, fontSize: 13 }}>這個月還沒有記錄，開始記第一筆吧。</div>
           ) : (
-            grouped.map((g) => <GroupRow key={g.groupId} g={g} staff={staff} onDelete={onDelete} />)
+            grouped.map((g) => (
+              <GroupRow key={g.groupId} g={g} staff={staff} onDelete={onDelete} onEdit={onUpdate}
+                editCtx={{ materials, incomeCats, allTransactions }} />
+            ))
           )}
         </div>
       </div>
@@ -1322,23 +1509,40 @@ export default function FinanceApp() {
 
   const addTxGroup = useCallback((rows, meta) => {
     const groupId = uid();
-    const txs = rows.map((r) => ({
-      id: uid(), groupId, type: meta.type, date: meta.date, category: r.category, amount: r.amount,
-      note: meta.note, paymentMethod: meta.paymentMethod, staffId: meta.staffId,
-      storeId: meta.storeId || "",
-    }));
+    const txs = rows.map((r) => buildTx(r, meta, groupId, uid()));
     setTransactions((prev) => [...txs, ...prev]);
-    const used = rows.filter((r) => r.materialId && r.qty > 0);
-    if (used.length > 0) {
-      setMaterials((prev) => prev.map((m) => {
-        const qty = used.filter((u) => u.materialId === m.id).reduce((sum, u) => sum + u.qty, 0);
-        return qty > 0 ? { ...m, stock: Math.max(0, m.stock - qty) } : m;
-      }));
-    }
+    applyStockDelta(stockDelta([], txs));
   }, []);
+
+  /** 整筆刪除：產品銷售扣掉的庫存加回去 */
   const deleteTxGroup = useCallback((groupId) => {
+    const gone = transactions.filter((t) => (t.groupId || t.id) === groupId);
     setTransactions((prev) => prev.filter((t) => (t.groupId || t.id) !== groupId));
-  }, []);
+    applyStockDelta(stockDelta(gone, []));
+  }, [transactions]);
+
+  /** 修改一整筆：用新的品項取代舊的；商品或數量有變才調整庫存，只改金額不動庫存 */
+  const updateTxGroup = useCallback((groupId, rows, meta) => {
+    const old = transactions.filter((t) => (t.groupId || t.id) === groupId);
+    if (old.length === 0) return;
+    const next = rows.map((r) => buildTx(r, { ...meta, type: old[0].type }, groupId, r.txId || uid()));
+    setTransactions((prev) => {
+      const at = prev.findIndex((t) => (t.groupId || t.id) === groupId);
+      const rest = prev.filter((t) => (t.groupId || t.id) !== groupId);
+      const idx = at < 0 ? 0 : Math.min(at, rest.length);
+      return [...rest.slice(0, idx), ...next, ...rest.slice(idx)];
+    });
+    applyStockDelta(stockDelta(old, next));
+  }, [transactions]);
+
+  /** delta = {物料id: 要加回的數量}（負數 = 再扣） */
+  function applyStockDelta(delta) {
+    const ids = Object.keys(delta).filter((k) => delta[k] !== 0);
+    if (ids.length === 0) return;
+    setMaterials((prev) => prev.map((m) => (
+      delta[m.id] ? { ...m, stock: Math.max(0, (Number(m.stock) || 0) + delta[m.id]) } : m
+    )));
+  }
   const addStaff = useCallback((s) => setStaff((prev) => [...prev, s]), []);
   const updateStaff = useCallback((id, patch) => setStaff((prev) => prev.map((s) => (s.id === id ? { ...s, ...patch } : s))), []);
   const deleteStaff = useCallback((id) => setStaff((prev) => prev.filter((s) => s.id !== id)), []);
@@ -1479,7 +1683,7 @@ export default function FinanceApp() {
         </div>
 
         {tab === "dashboard" && <Dashboard transactions={visibleTx} allTransactions={transactions} staff={staff} storeFilter={storeFilter} />}
-        {tab === "ledger" && <LedgerView transactions={visibleTx} staff={staff} materials={materials} defaultStoreId={activeStoreId} incomeCats={incomeCats} priceChips={priceChips} onAdd={addTxGroup} onDelete={deleteTxGroup} />}
+        {tab === "ledger" && <LedgerView transactions={visibleTx} staff={staff} materials={materials} defaultStoreId={activeStoreId} incomeCats={incomeCats} priceChips={priceChips} onAdd={addTxGroup} onDelete={deleteTxGroup} onUpdate={updateTxGroup} allTransactions={transactions} />}
         {tab === "materials" && <MaterialsView materials={materials} onAdd={addMaterial} onUpdate={updateMaterial} onDelete={deleteMaterial} />}
         {/* 薪資刻意用完整 transactions，不受分店篩選影響——設計師的抽成是兩店合併計算 */}
         {tab === "staff" && (
