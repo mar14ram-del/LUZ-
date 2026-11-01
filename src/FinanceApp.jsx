@@ -104,7 +104,9 @@ function fmtSigned(n) {
   return (v >= 0 ? "+" : "") + v.toLocaleString("zh-TW");
 }
 function todayStr() {
-  return new Date().toISOString().slice(0, 10);
+  // 用本機（台灣）時間；toISOString 是國際標準時間，凌晨 0～8 點會變成前一天
+  const d = new Date();
+  return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
 }
 function monthKey(dateStr) {
   return (dateStr || "").slice(0, 7);
