@@ -919,8 +919,11 @@ function AssistantItemsEditor({ items, templates, onChange, onAddTemplate, onRem
   const [showTemplates, setShowTemplates] = useState(false);
   const [newTemplate, setNewTemplate] = useState("");
 
-  function addItem(name) {
-    onChange([...items, { id: uid(), name: name || "", amount: 0, kind: "add" }]);
+  // 從範本選的項目要加成加項還是扣項
+  const [templateKind, setTemplateKind] = useState("add");
+
+  function addItem(name, kind) {
+    onChange([...items, { id: uid(), name: name || "", amount: 0, kind: kind || "add" }]);
   }
   function updateItem(id, patch) {
     onChange(items.map((i) => (i.id === id ? { ...i, ...patch } : i)));
@@ -933,23 +936,32 @@ function AssistantItemsEditor({ items, templates, onChange, onAddTemplate, onRem
     <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
       {items.map((it) => (
         <div key={it.id} style={{ display: "flex", gap: 6, alignItems: "center" }}>
-          <button type="button" className={"chip" + (it.kind === "add" ? " chip-on" : "")} style={{ flexShrink: 0, minWidth: 44 }} onClick={() => updateItem(it.id, { kind: it.kind === "add" ? "deduct" : "add" })}>
-            {it.kind === "add" ? "＋加項" : "－扣項"}
+          <button type="button" className={"chip" + (it.kind === "add" ? " chip-on" : "")}
+            style={{ flexShrink: 0, minWidth: 60, ...(it.kind === "add" ? {} : { background: WINE_LIGHT, color: WINE, borderColor: WINE }) }}
+            title="點一下切換加項／扣款"
+            onClick={() => updateItem(it.id, { kind: it.kind === "add" ? "deduct" : "add" })}>
+            {it.kind === "add" ? "＋加項" : "－扣款"}
           </button>
-          <input className="ledger-input" style={{ flex: 1 }} placeholder="項目名稱" value={it.name} onChange={(e) => updateItem(it.id, { name: e.target.value })} />
+          <input className="ledger-input" style={{ flex: 1 }} placeholder={it.kind === "add" ? "加項名稱（例如全勤、獎金）" : "扣款名稱（例如代購、遲到、借支）"} value={it.name} onChange={(e) => updateItem(it.id, { name: e.target.value })} />
           <input className="ledger-input" style={{ width: 90 }} type="number" min="0" value={it.amount} onChange={(e) => updateItem(it.id, { amount: parseFloat(e.target.value) || 0 })} />
           <button type="button" className="ledger-icon-btn" onClick={() => removeItem(it.id)} aria-label="移除"><X size={14} /></button>
         </div>
       ))}
       <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
-        <button type="button" className="ledger-btn" style={{ fontSize: 12 }} onClick={() => addItem("")}><Plus size={13} /> 自訂項目</button>
+        <button type="button" className="ledger-btn" style={{ fontSize: 12 }} onClick={() => addItem("", "add")}><Plus size={13} /> 新增加項</button>
+        <button type="button" className="ledger-btn" style={{ fontSize: 12, color: WINE }} onClick={() => addItem("", "deduct")}><Plus size={13} /> 新增扣款項目</button>
         <button type="button" className="chip" onClick={() => setShowTemplates((v) => !v)}>{showTemplates ? "收合範本" : "從範本選"}</button>
       </div>
       {showTemplates && (
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 6, background: PAPER, borderRadius: 8, padding: 10 }}>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 6, background: PAPER, borderRadius: 8, padding: 10, alignItems: "center" }}>
+          <span style={{ fontSize: 12, color: MUTED }}>點範本加成：</span>
+          <button type="button" className={"chip" + (templateKind === "add" ? " chip-on" : "")} onClick={() => setTemplateKind("add")}>加項</button>
+          <button type="button" className="chip" onClick={() => setTemplateKind("deduct")}
+            style={templateKind === "deduct" ? { background: WINE_LIGHT, color: WINE, borderColor: WINE } : undefined}>扣款</button>
+          <span style={{ flexBasis: "100%", height: 0 }} />
           {templates.map((t) => (
             <span key={t} className="tpl-chip">
-              <span onClick={() => addItem(t)}>{t}</span>
+              <span onClick={() => addItem(t, templateKind)}>{t}</span>
               <X size={11} style={{ cursor: "pointer" }} onClick={() => onRemoveTemplate(t)} />
             </span>
           ))}
