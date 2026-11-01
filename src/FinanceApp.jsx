@@ -114,6 +114,22 @@ function monthLabel(mk) {
   const [y, m] = mk.split("-");
   return y + "年" + Number(m) + "月";
 }
+/** 以本機時間算的這個月 YYYY-MM */
+function currentMonthKey() {
+  const d = new Date();
+  return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0");
+}
+/** 往前或往後推 n 個月 */
+function shiftMonth(mk, n) {
+  const [y, m] = mk.split("-").map(Number);
+  const d = new Date(y, m - 1 + n, 1);
+  return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0");
+}
+/** 某個月的最後一天 YYYY-MM-DD（薪資支出記在這天，月報表才會算在那個月） */
+function monthEnd(mk) {
+  const [y, m] = mk.split("-").map(Number);
+  return mk + "-" + String(new Date(y, m, 0).getDate()).padStart(2, "0");
+}
 function addMonths(mk, delta) {
   const [y, m] = mk.split("-").map(Number);
   const d = new Date(y, m - 1 + delta, 1);
@@ -946,7 +962,7 @@ function AssistantItemsEditor({ items, templates, onChange, onAddTemplate, onRem
   );
 }
 
-function AssistantCard({ s, items, templates, onChangeItems, onAddTemplate, onRemoveTemplate, onEdit, onDelete, onSettle, alreadySettled }) {
+function AssistantCard({ s, mk, items, templates, onChangeItems, onAddTemplate, onRemoveTemplate, onEdit, onDelete, onSettle, alreadySettled }) {
   const addTotal = items.filter((i) => i.kind === "add").reduce((sum, i) => sum + i.amount, 0);
   const deductTotal = items.filter((i) => i.kind === "deduct").reduce((sum, i) => sum + i.amount, 0);
   const payable = s.baseSalary + addTotal - deductTotal;
@@ -963,13 +979,13 @@ function AssistantCard({ s, items, templates, onChangeItems, onAddTemplate, onRe
         </div>
       </div>
       <div style={{ marginTop: 12, paddingTop: 12, borderTop: "1px dashed " + PAPER_LINE }}>
-        <div style={{ fontSize: 12, color: MUTED, marginBottom: 8 }}>本月加項 / 扣款項目</div>
+        <div style={{ fontSize: 12, color: MUTED, marginBottom: 8 }}>{monthLabel(mk)}加項 / 扣款項目</div>
         <AssistantItemsEditor items={items} templates={templates} onChange={onChangeItems} onAddTemplate={onAddTemplate} onRemoveTemplate={onRemoveTemplate} />
       </div>
       <div style={{ marginTop: 12, paddingTop: 12, borderTop: "1px dashed " + PAPER_LINE, display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 10 }}>
         <div style={{ fontSize: 13, color: MUTED }}>底薪 {fmtMoney(s.baseSalary)} ＋ 加項 {fmtMoney(addTotal)} － 扣項 {fmtMoney(deductTotal)}</div>
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontWeight: 600, fontSize: 16, color: INK }}>本月應付 {fmtMoney(payable)}</div>
+          <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontWeight: 600, fontSize: 16, color: INK }}>{Number(mk.slice(5))}月應付 {fmtMoney(payable)}</div>
           <button className="ledger-btn" disabled={alreadySettled || payable <= 0} onClick={() => onSettle(s, payable)} style={{ fontSize: 12, opacity: alreadySettled || payable <= 0 ? 0.5 : 1 }}>
             {alreadySettled ? <><Check size={13} /> 已結算</> : "建立薪資支出"}
           </button>
@@ -1015,8 +1031,7 @@ function DesignerDeductionsEditor({ items, onChange }) {
   );
 }
 
-function DesignerCard({ s, transactions, deductions, onChangeDeductions, onEdit, onDelete, onSettle, alreadySettled }) {
-  const mk = monthKey(todayStr());
+function DesignerCard({ s, mk, transactions, deductions, onChangeDeductions, onEdit, onDelete, onSettle, alreadySettled }) {
   const commissionTx = transactions.filter((t) => t.type === "income" && t.staffId === s.id && monthKey(t.date) === mk);
   const revenue = commissionTx.reduce((sum, t) => sum + t.amount, 0);
   const materialRate = s.defaultMaterialRate ?? DEFAULT_MATERIAL_RATE;
@@ -1052,7 +1067,7 @@ function DesignerCard({ s, transactions, deductions, onChangeDeductions, onEdit,
       <div style={{ marginTop: 12, paddingTop: 12, borderTop: "1px dashed " + PAPER_LINE, display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 10 }}>
         <div style={{ fontSize: 13, color: MUTED }}>底薪 {fmtMoney(s.baseSalary)} ＋ 抽成 {fmtMoney(commission)} ＋ 獎金 {fmtMoney(bonusTotal)} － 其他扣款 {fmtMoney(otherDeductionTotal)}</div>
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontWeight: 600, fontSize: 16, color: INK }}>本月應付 {fmtMoney(payable)}</div>
+          <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontWeight: 600, fontSize: 16, color: INK }}>{Number(mk.slice(5))}月應付 {fmtMoney(payable)}</div>
           <button className="ledger-btn" disabled={alreadySettled || payable <= 0} onClick={() => onSettle(s, payable)} style={{ fontSize: 12, opacity: alreadySettled || payable <= 0 ? 0.5 : 1 }}>
             {alreadySettled ? <><Check size={13} /> 已結算</> : "建立薪資支出"}
           </button>
@@ -1069,7 +1084,17 @@ function StaffView({
 }) {
   const [category, setCategory] = useState("designer");
   const [editingId, setEditingId] = useState(null);
-  const mk = monthKey(todayStr());
+
+  // 每月 1～10 號通常在算上個月的薪水，所以預設顯示上個月；之後預設這個月
+  const thisMonth = currentMonthKey();
+  const lastMonth = shiftMonth(thisMonth, -1);
+  const [mk, setMk] = useState(() => (new Date().getDate() <= 10 ? lastMonth : thisMonth));
+  const monthOptions = useMemo(() => {
+    const set = new Set(transactions.map((t) => monthKey(t.date)).filter((m) => m && m <= thisMonth));
+    set.add(thisMonth); set.add(lastMonth); set.add(mk);
+    return Array.from(set).sort().reverse();
+  }, [transactions, thisMonth, lastMonth, mk]);
+  const monthNotOver = mk >= thisMonth;
 
   const list = staff.filter((s) => staffCategory(s) === category);
   const editingStaff = editingId ? staff.find((s) => s.id === editingId) : null;
@@ -1081,11 +1106,24 @@ function StaffView({
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-      <div style={{ display: "flex", gap: 8 }}>
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
         {[["designer", "設計師"], ["assistant", "助理"]].map(([v, l]) => (
           <button key={v} className={"chip" + (category === v ? " chip-on" : "")} onClick={() => { setCategory(v); setEditingId(null); }}>{l}</button>
         ))}
+        <div style={{ flex: 1 }} />
+        <span style={{ fontSize: 13, color: MUTED }}>薪資月份</span>
+        <select className="ledger-input" style={{ width: 140 }} value={mk} onChange={(e) => setMk(e.target.value)}>
+          {monthOptions.map((m) => <option key={m} value={m}>{monthLabel(m)}</option>)}
+        </select>
+        <button className={"chip" + (mk === lastMonth ? " chip-on" : "")} onClick={() => setMk(lastMonth)}>上個月</button>
+        <button className={"chip" + (mk === thisMonth ? " chip-on" : "")} onClick={() => setMk(thisMonth)}>這個月</button>
       </div>
+
+      {monthNotOver && (
+        <div style={{ fontSize: 13, background: BRASS_LIGHT, color: BRASS, padding: "9px 12px", borderRadius: 8, lineHeight: 1.6 }}>
+          {monthLabel(mk)}還沒結束，業績還會再增加。建議月底後再按「建立薪資支出」。
+        </div>
+      )}
 
       <div style={{ display: "grid", gridTemplateColumns: "300px 1fr", gap: 20 }} className="responsive-grid">
         <StaffEditForm category={category} editingStaff={editingStaff} onSave={saveStaff} onCancel={() => setEditingId(null)} />
@@ -1095,12 +1133,12 @@ function StaffView({
           {list.map((s) => {
             const settledNote = "薪資結算：" + s.name + " " + mk;
             const alreadySettled = transactions.some((t) => t.type === "expense" && t.note === settledNote);
-            const handleSettle = (staffObj, payable) => onSettle(staffObj, payable, settledNote);
+            const handleSettle = (staffObj, payable) => onSettle(staffObj, payable, settledNote, mk);
             if (category === "assistant") {
               const items = assistantItems.filter((i) => i.staffId === s.id && i.month === mk);
               return (
                 <AssistantCard
-                  key={s.id} s={s} items={items} templates={templates}
+                  key={s.id} s={s} mk={mk} items={items} templates={templates}
                   onChangeItems={(next) => onChangeAssistantItems(s.id, mk, next)}
                   onAddTemplate={onAddTemplate} onRemoveTemplate={onRemoveTemplate}
                   onEdit={() => setEditingId(s.id)} onDelete={onDelete}
@@ -1111,7 +1149,7 @@ function StaffView({
             const deductions = designerDeductions.filter((d) => d.staffId === s.id && d.month === mk);
             return (
               <DesignerCard
-                key={s.id} s={s} transactions={transactions} deductions={deductions}
+                key={s.id} s={s} mk={mk} transactions={transactions} deductions={deductions}
                 onChangeDeductions={(next) => onChangeDesignerDeductions(s.id, mk, next)}
                 onEdit={() => setEditingId(s.id)} onDelete={onDelete}
                 onSettle={handleSettle} alreadySettled={alreadySettled}
@@ -1549,8 +1587,9 @@ export default function FinanceApp() {
   const addMaterial = useCallback((m) => setMaterials((prev) => [...prev, m]), []);
   const updateMaterial = useCallback((id, patch) => setMaterials((prev) => prev.map((m) => (m.id === id ? { ...m, ...patch } : m))), []);
   const deleteMaterial = useCallback((id) => setMaterials((prev) => prev.filter((m) => m.id !== id)), []);
-  const settleStaff = useCallback((s, amount, note) => {
-    addTx({ id: uid(), type: "expense", date: todayStr(), category: "員工薪資", amount, note, paymentMethod: "銀行轉帳", staffId: null });
+  // 薪資支出記在那個月的最後一天，月報表才會把薪水算在該月
+  const settleStaff = useCallback((s, amount, note, month) => {
+    addTx({ id: uid(), type: "expense", date: month ? monthEnd(month) : todayStr(), category: "員工薪資", amount, note, paymentMethod: "銀行轉帳", staffId: null });
   }, [addTx]);
   const changeAssistantItems = useCallback((staffId, month, nextItems) => {
     setAssistantItems((prev) => {
