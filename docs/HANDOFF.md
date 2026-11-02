@@ -137,9 +137,9 @@
 
 ## 7. 尚未完成 / 待確認
 
-1. **LINE Login channel 必須改成「Published」**：使用者測試時出現「This channel is now developing status」，代表 channel `2011350495` 還在開發中，一般客人登不進來。要在 LINE Developers Console → 該 LINE Login channel → 點 Developing → Publish。最後一次對話時使用者還在找這個 channel，**不確定是否已完成**。
+1. ~~LINE Login channel 必須改成「Published」~~ **已完成（2026-11-03 使用者確認）**：channel `2011350495` 已發佈，一般客人可以用 LINE 登入。
 2. 建議在 LIFF 設定「Add friend option」設為 On (Aggressive)，否則沒加官方帳號好友的客人收不到 LINE 通知。
-3. 「我的預約」與自行取消**還沒用真實 LINE 帳號完整測過**（要等第 1 點完成）。
+3. 「我的預約」與自行取消**還沒用真實 LINE 帳號完整測過**（頻道已發佈，可以開始測：LINE 登入 → 預約 → 我的預約看到待確認 → 後台確認後變已確認 → 自行取消 → 收到 LINE 取消通知、後台跳紅色提醒）。
 4. 顧客 CSV 匯入（7021 筆）工具已上線，**使用者是否已實際匯入未確認**。檔案 `客戶資料_7021筆.csv` 曾傳給使用者。
 5. 客人取消已確認的預約後，要等後台「預約管理」打開才會同步班表並釋放公開時段。
 6. 「每日業績」目前只能在財務帳本裡看（會看到所有人）；曾討論過「設計師用自己手機 LINE 登入只看自己」的做法，尚未決定。
