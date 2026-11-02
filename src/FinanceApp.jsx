@@ -67,6 +67,42 @@ function filterByStore(txs, storeId) {
 const DEFAULT_ASSISTANT_TEMPLATES = ["全勤獎金", "業績獎金", "交通津貼", "伙食津貼", "遲到扣款", "請假扣款"];
 const DEFAULT_MATERIAL_RATE = 10;
 const DEFAULT_SALE_DISCOUNT = 0.6; // 產品銷售預設折數（六折）
+const PRODUCT_COST_RATE = 0.5; // 產品成本 = 定價 5 折
+
+/**
+ * 產品銷售算給設計師的業績 = 實收 − 定價 × 5 折 × 數量（也就是賣 6 折時中間那一成）。
+ * 舊紀錄沒記商品或物料沒填售價時，以「實收 ÷ 6」估算（6 折賣出時剛好是定價一成）。
+ */
+function productMarginOf(t, materials) {
+  const m = t.materialId ? (materials || []).find((x) => x.id === t.materialId) : null;
+  const price = m ? Number(m.price) || 0 : 0;
+  const qty = Number(t.qty) || 0;
+  if (price > 0 && qty > 0) return Math.max(0, t.amount - price * PRODUCT_COST_RATE * qty);
+  return Math.max(0, t.amount / 6);
+}
+
+/**
+ * 設計師在一批收入裡的業績與預估抽成（每日業績與薪資共用同一套算法）：
+ *   服務：扣基本物料 % 後乘抽成 %
+ *   產品：只算差價，差價整筆歸設計師
+ */
+function designerPerformance(txs, s, materials) {
+  let service = 0;
+  let product = 0;
+  txs.forEach((t) => {
+    if (t.category === "產品銷售") product += productMarginOf(t, materials);
+    else service += t.amount;
+  });
+  const materialRate = s.defaultMaterialRate ?? DEFAULT_MATERIAL_RATE;
+  const baseMaterial = service * (materialRate / 100);
+  const net = service - baseMaterial;
+  const serviceCommission = net * ((s.commissionRate || 0) / 100);
+  return {
+    service, product, revenue: service + product,
+    materialRate, baseMaterial, net, serviceCommission,
+    commission: serviceCommission + product,
+  };
+}
 
 function uid() {
   return (crypto.randomUUID ? crypto.randomUUID() : "id-" + Date.now() + "-" + Math.random().toString(16).slice(2));
@@ -669,16 +705,112 @@ function GroupRow({ g, staff, onDelete, onEdit, editCtx }) {
   );
 }
 
+/** 記帳頁上方：每位設計師某一天的業績、本月累計與預估抽成 */
+function DailyPerformance({ transactions, staff, materials, focus, onFocus }) {
+  const [day, setDay] = useState(todayStr());
+  const designers = staff.filter((s) => staffCategory(s) === "designer");
+  const mk = monthKey(day);
+
+  function shiftDay(n) {
+    const d = new Date(day + "T00:00:00");
+    d.setDate(d.getDate() + n);
+    setDay(d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0"));
+  }
+
+  const rows = designers.map((s) => {
+    const mine = transactions.filter((t) => t.type === "income" && t.staffId === s.id);
+    const dayTx = mine.filter((t) => t.date === day);
+    const monthTx = mine.filter((t) => monthKey(t.date) === mk && t.date <= day);
+    return {
+      s,
+      count: new Set(dayTx.map((t) => t.groupId || t.id)).size,
+      today: designerPerformance(dayTx, s, materials),
+      month: designerPerformance(monthTx, s, materials),
+    };
+  });
+  const sum = (key, part) => rows.reduce((t, r) => t + r[part][key], 0);
+  const weekday = ["日", "一", "二", "三", "四", "五", "六"][new Date(day + "T00:00:00").getDay()];
+  const cell = { fontFamily: "'IBM Plex Mono', monospace", textAlign: "right", fontVariantNumeric: "tabular-nums" };
+
+  return (
+    <div style={{ background: PAPER_RAISED, border: "1px solid " + PAPER_LINE, borderRadius: 10, padding: 14 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 8 }}>
+        <div style={{ fontFamily: "'Fraunces', serif", fontSize: 15, fontWeight: 600, color: INK }}>每日業績</div>
+        <div style={{ flex: 1 }} />
+        <button className="ledger-icon-btn" onClick={() => shiftDay(-1)} aria-label="前一天"><ChevronLeft size={15} /></button>
+        <input type="date" className="ledger-input" style={{ width: 150 }} value={day} onChange={(e) => e.target.value && setDay(e.target.value)} />
+        <span style={{ fontSize: 12, color: MUTED }}>（{weekday}）</span>
+        <button className="ledger-icon-btn" onClick={() => shiftDay(1)} aria-label="後一天"><ChevronRight size={15} /></button>
+        <button className={"chip" + (day === todayStr() ? " chip-on" : "")} onClick={() => setDay(todayStr())}>今天</button>
+      </div>
+      <div style={{ overflowX: "auto" }}>
+        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13, color: INK, minWidth: 460 }}>
+          <thead>
+            <tr style={{ color: MUTED, fontSize: 11.5 }}>
+              <th style={{ textAlign: "left", fontWeight: 500, padding: "4px 0" }}>設計師</th>
+              <th style={{ ...cell, fontWeight: 500 }}>筆數</th>
+              <th style={{ ...cell, fontWeight: 500 }}>當日業績</th>
+              <th style={{ ...cell, fontWeight: 500 }}>當日預估抽成</th>
+              <th style={{ ...cell, fontWeight: 500 }}>本月累計業績</th>
+              <th style={{ ...cell, fontWeight: 500 }}>本月預估抽成</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r) => {
+              const on = focus && focus.staffId === r.s.id && focus.date === day;
+              return (
+                <tr key={r.s.id} style={{ borderTop: "1px solid " + PAPER_LINE, background: on ? BRASS_LIGHT : "transparent" }}>
+                  <td style={{ padding: "6px 0" }}>
+                    <button className="chip" style={on ? { background: INK, color: PAPER_RAISED, borderColor: INK } : undefined}
+                      title="只看他這天的記帳" onClick={() => onFocus(on ? null : { staffId: r.s.id, date: day })}>
+                      {r.s.name}
+                    </button>
+                  </td>
+                  <td style={cell}>{r.count}</td>
+                  <td style={{ ...cell, color: r.today.revenue ? INK : MUTED }}>{fmtMoney(r.today.revenue)}</td>
+                  <td style={{ ...cell, color: r.today.commission ? SAGE : MUTED }}>{fmtMoney(r.today.commission)}</td>
+                  <td style={cell}>{fmtMoney(r.month.revenue)}</td>
+                  <td style={{ ...cell, color: SAGE }}>{fmtMoney(r.month.commission)}</td>
+                </tr>
+              );
+            })}
+            <tr style={{ borderTop: "1px solid " + INK, fontWeight: 600 }}>
+              <td style={{ padding: "6px 0" }}>全部設計師</td>
+              <td style={cell}>{rows.reduce((t, r) => t + r.count, 0)}</td>
+              <td style={cell}>{fmtMoney(sum("revenue", "today"))}</td>
+              <td style={cell}>{fmtMoney(sum("commission", "today"))}</td>
+              <td style={cell}>{fmtMoney(sum("revenue", "month"))}</td>
+              <td style={cell}>{fmtMoney(sum("commission", "month"))}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <div style={{ fontSize: 11.5, color: MUTED, marginTop: 8, lineHeight: 1.6 }}>
+        業績＝服務金額＋產品差價（定價一成）。預估抽成算法與薪資頁相同，不含底薪與獎金扣款。只有記帳時選了服務員工的才會算進來。點名字可以只看他這天的記帳。
+      </div>
+    </div>
+  );
+}
+
 function LedgerView({ transactions, allTransactions, staff, materials, defaultStoreId, incomeCats, priceChips, onAdd, onDelete, onUpdate }) {
   const [filterType, setFilterType] = useState("all");
   const [filterMonth, setFilterMonth] = useState(monthKey(todayStr()));
+  // 在每日業績點了某位設計師：清單只顯示他那一天的記帳
+  const [focus, setFocus] = useState(null);
+  const focusStaff = focus ? staff.find((s) => s.id === focus.staffId) : null;
+
+  function changeFocus(next) {
+    setFocus(next);
+    if (next) setFilterMonth(monthKey(next.date));
+  }
 
   const filtered = useMemo(() => {
     return transactions
       .filter((t) => (filterType === "all" ? true : t.type === filterType))
       .filter((t) => monthKey(t.date) === filterMonth)
+      .filter((t) => !focus || (t.date === focus.date && t.staffId === focus.staffId))
       .sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0));
-  }, [transactions, filterType, filterMonth]);
+  }, [transactions, filterType, filterMonth, focus]);
 
   const grouped = useMemo(() => groupTx(filtered), [filtered]);
 
@@ -693,8 +825,18 @@ function LedgerView({ transactions, allTransactions, staff, materials, defaultSt
       <TxForm onAdd={onAdd} staff={staff} materials={materials} defaultStoreId={defaultStoreId} incomeCats={incomeCats} priceChips={priceChips} />
 
       <div style={{ display: "flex", flexDirection: "column", gap: 12, minWidth: 0 }}>
+        <DailyPerformance transactions={transactions} staff={staff} materials={materials} focus={focus} onFocus={changeFocus} />
+
+        {focusStaff && (
+          <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, background: BRASS_LIGHT, color: BRASS, padding: "7px 12px", borderRadius: 8 }}>
+            只顯示 {focusStaff.name} {focus.date.slice(5).replace("-", "/")} 的記帳
+            <div style={{ flex: 1 }} />
+            <button className="chip" onClick={() => setFocus(null)}>顯示全部</button>
+          </div>
+        )}
+
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-          <select value={filterMonth} onChange={(e) => setFilterMonth(e.target.value)} className="ledger-input" style={{ width: 130 }}>
+          <select value={filterMonth} onChange={(e) => { setFilterMonth(e.target.value); setFocus(null); }} className="ledger-input" style={{ width: 130 }}>
             {availableMonths.map((m) => <option key={m} value={m}>{monthLabel(m)}</option>)}
           </select>
           <div style={{ display: "flex", gap: 6 }}>
@@ -1045,13 +1187,12 @@ function DesignerDeductionsEditor({ items, onChange }) {
   );
 }
 
-function DesignerCard({ s, mk, transactions, deductions, onChangeDeductions, onEdit, onDelete, onSettle, alreadySettled }) {
+function DesignerCard({ s, mk, transactions, materials, deductions, onChangeDeductions, onEdit, onDelete, onSettle, alreadySettled }) {
   const commissionTx = transactions.filter((t) => t.type === "income" && t.staffId === s.id && monthKey(t.date) === mk);
-  const revenue = commissionTx.reduce((sum, t) => sum + t.amount, 0);
-  const materialRate = s.defaultMaterialRate ?? DEFAULT_MATERIAL_RATE;
-  const baseMaterial = revenue * (materialRate / 100);
-  const netRevenue = revenue - baseMaterial;
-  const commission = netRevenue * (s.commissionRate / 100);
+  const perf = designerPerformance(commissionTx, s, materials);
+  const revenue = perf.revenue;
+  const { materialRate, baseMaterial, commission } = perf;
+  const netRevenue = perf.net;
 
   const itemAmount = (d) => (d.type === "percent" ? revenue * (d.value / 100) : d.value);
   const otherDeductionTotal = deductions.filter((d) => d.kind !== "add").reduce((sum, d) => sum + itemAmount(d), 0);
@@ -1071,8 +1212,10 @@ function DesignerCard({ s, mk, transactions, deductions, onChangeDeductions, onE
         </div>
       </div>
       <div style={{ marginTop: 12, paddingTop: 12, borderTop: "1px dashed " + PAPER_LINE, fontSize: 13, color: MUTED, display: "flex", flexDirection: "column", gap: 2 }}>
-        <div>{monthLabel(mk)}業績 {fmtMoney(revenue)} － 基本物料 {materialRate}%（{fmtMoney(baseMaterial)}）＝ {fmtMoney(netRevenue)}</div>
-        <div>抽成 {fmtMoney(netRevenue)} × {s.commissionRate}% ＝ {fmtMoney(commission)}</div>
+        <div>{monthLabel(mk)}服務業績 {fmtMoney(perf.service)} － 基本物料 {materialRate}%（{fmtMoney(baseMaterial)}）＝ {fmtMoney(netRevenue)}</div>
+        <div>服務抽成 {fmtMoney(netRevenue)} × {s.commissionRate}% ＝ {fmtMoney(perf.serviceCommission)}</div>
+        {perf.product > 0 && <div>產品差價（定價一成，整筆歸設計師）＝ {fmtMoney(perf.product)}</div>}
+        <div style={{ color: INK }}>抽成合計 {fmtMoney(commission)}</div>
       </div>
       <div style={{ marginTop: 10 }}>
         <div style={{ fontSize: 12, color: MUTED, marginBottom: 8 }}>其他獎金／扣款（代購、賠償、業績獎金等，從應付薪資中再加減；基本物料已內含在抽成計算中，不用重複列在這裡）</div>
@@ -1092,7 +1235,7 @@ function DesignerCard({ s, mk, transactions, deductions, onChangeDeductions, onE
 }
 
 function StaffView({
-  staff, transactions, assistantItems, designerDeductions, templates,
+  staff, transactions, materials, assistantItems, designerDeductions, templates,
   onAdd, onUpdate, onDelete, onSettle,
   onChangeAssistantItems, onChangeDesignerDeductions, onAddTemplate, onRemoveTemplate,
 }) {
@@ -1163,7 +1306,7 @@ function StaffView({
             const deductions = designerDeductions.filter((d) => d.staffId === s.id && d.month === mk);
             return (
               <DesignerCard
-                key={s.id} s={s} mk={mk} transactions={transactions} deductions={deductions}
+                key={s.id} s={s} mk={mk} transactions={transactions} materials={materials} deductions={deductions}
                 onChangeDeductions={(next) => onChangeDesignerDeductions(s.id, mk, next)}
                 onEdit={() => setEditingId(s.id)} onDelete={onDelete}
                 onSettle={handleSettle} alreadySettled={alreadySettled}
@@ -1742,7 +1885,7 @@ export default function FinanceApp() {
         {tab === "staff" && (
           <PayrollLock title="員工薪資">
             <StaffView
-              staff={staff} transactions={transactions} assistantItems={assistantItems} designerDeductions={designerDeductions} templates={templates}
+              staff={staff} transactions={transactions} materials={materials} assistantItems={assistantItems} designerDeductions={designerDeductions} templates={templates}
               onAdd={addStaff} onUpdate={updateStaff} onDelete={deleteStaff} onSettle={settleStaff}
               onChangeAssistantItems={changeAssistantItems} onChangeDesignerDeductions={changeDesignerDeductions}
               onAddTemplate={addTemplate} onRemoveTemplate={removeTemplate}
