@@ -20,6 +20,7 @@ const MUTED = "#8A8072";
 
 const CUSTOMER_KEY = "customers:list";
 const STAFF_KEY = "finance:staff";
+const TX_KEY = "finance:transactions"; // 只讀：財務帳本記帳時選了客人的消費
 
 const GENDER_OPTIONS = ["女", "男", "不透露"];
 const SCALP_OPTIONS = ["中性", "偏油", "偏乾", "敏感"];
@@ -40,7 +41,7 @@ function todayStr() {
   const d = new Date();
   return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
 }
-function blankCustomer() {
+export function blankCustomer() {
   return {
     id: uid(), name: "", nickname: "", gender: "女", birthday: "", phone: "", lineId: "",
     address: "", createdDate: todayStr(), source: SOURCE_OPTIONS[0],
@@ -222,7 +223,45 @@ function Section({ title, defaultOpen, children }) {
   );
 }
 
-function CustomerForm({ customer, staff, onSave, onCancel, onDelete, isNew }) {
+/** 財務帳本裡這位客人的消費（同一次結帳的多個品項合成一筆） */
+function PurchaseHistory({ txs, staff }) {
+  const groups = useMemo(() => {
+    const map = new Map();
+    (txs || []).forEach((t) => {
+      const gid = t.groupId || t.id;
+      if (!map.has(gid)) map.set(gid, { id: gid, date: t.date, staffId: t.staffId, cats: [], amount: 0 });
+      const g = map.get(gid);
+      g.cats.push(t.category);
+      g.amount += Number(t.amount) || 0;
+    });
+    return Array.from(map.values()).sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0));
+  }, [txs]);
+
+  if (groups.length === 0) {
+    return <div style={{ fontSize: 13, color: MUTED }}>還沒有記帳紀錄。在財務帳本記帳時選這位客人，消費就會出現在這裡。</div>;
+  }
+  const total = groups.reduce((s, g) => s + g.amount, 0);
+  return (
+    <div>
+      <div style={{ fontSize: 13, color: INK, marginBottom: 8 }}>
+        共 {groups.length} 次，合計 <b>{fmtMoney(total)}</b>，最近一次 {groups[0].date.replace(/-/g, "/")}
+      </div>
+      {groups.slice(0, 30).map((g) => {
+        const s = staff.find((x) => x.id === g.staffId);
+        return (
+          <div key={g.id} style={{ display: "flex", gap: 10, alignItems: "baseline", padding: "6px 0", borderTop: "1px solid " + PAPER_LINE, fontSize: 13 }}>
+            <span style={{ width: 82, color: MUTED, fontFamily: "'IBM Plex Mono', monospace", fontSize: 12 }}>{g.date}</span>
+            <span style={{ flex: 1, minWidth: 0, color: INK }}>{g.cats.join("、")}{s ? " · " + s.name : ""}</span>
+            <span style={{ fontFamily: "'IBM Plex Mono', monospace", color: SAGE, fontWeight: 600 }}>{fmtMoney(g.amount)}</span>
+          </div>
+        );
+      })}
+      {groups.length > 30 && <div style={{ fontSize: 12, color: MUTED, paddingTop: 6 }}>只顯示最近 30 次</div>}
+    </div>
+  );
+}
+
+function CustomerForm({ customer, staff, purchases, onSave, onCancel, onDelete, isNew }) {
   const [form, setForm] = useState(customer);
   useEffect(() => { setForm(customer); }, [customer.id]);
 
@@ -299,6 +338,12 @@ function CustomerForm({ customer, staff, onSave, onCancel, onDelete, isNew }) {
         <Field label="染燙配方 / 用藥紀錄（自由填寫，可累積記錄）"><textarea className="ledger-input" rows={3} value={form.colorFormula || ""} onChange={(e) => set("colorFormula", e.target.value)} placeholder="例如：2026/07 染劑 A牌 6.0 + 8vol 1:1，或燙髮藥水種類與卷度" /></Field>
       </Section>
 
+      {!isNew && (
+        <Section title="記帳消費紀錄（財務帳本）" defaultOpen={(purchases || []).length > 0}>
+          <PurchaseHistory txs={purchases} staff={staff} />
+        </Section>
+      )}
+
       <Section title="消費與往來記錄">
         <div className="form-grid-2">
           <Field label="累積消費金額 (NT$)"><input type="number" className="ledger-input" value={form.totalSpend} onChange={(e) => set("totalSpend", e.target.value)} /></Field>
@@ -370,15 +415,27 @@ export default function SalonCustomerApp() {
   const [search, setSearch] = useState("");
   const [tagFilter, setTagFilter] = useState("");
   const [draftNew, setDraftNew] = useState(null);
+  const [transactions, setTransactions] = useState([]);
 
   useEffect(() => {
     (async () => {
-      const [cs, st] = await Promise.all([loadKey(CUSTOMER_KEY, []), loadKey(STAFF_KEY, [])]);
+      const [cs, st, tx] = await Promise.all([loadKey(CUSTOMER_KEY, []), loadKey(STAFF_KEY, []), loadKey(TX_KEY, [])]);
       setCustomers(cs);
       setStaff(st);
+      setTransactions(Array.isArray(tx) ? tx : []);
       setLoaded(true);
     })();
   }, []);
+
+  const purchasesByCustomer = useMemo(() => {
+    const map = new Map();
+    transactions.forEach((t) => {
+      if (t.type !== "income" || !t.customerId) return;
+      if (!map.has(t.customerId)) map.set(t.customerId, []);
+      map.get(t.customerId).push(t);
+    });
+    return map;
+  }, [transactions]);
 
   useEffect(() => { if (loaded) saveKey(CUSTOMER_KEY, customers); }, [customers, loaded]);
 
@@ -561,6 +618,7 @@ export default function SalonCustomerApp() {
                 key={selected.id}
                 customer={selected}
                 staff={staff}
+                purchases={purchasesByCustomer.get(selected.id) || []}
                 isNew={isNew}
                 onSave={save}
                 onCancel={cancel}

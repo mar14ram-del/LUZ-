@@ -6,9 +6,11 @@ import {
 import {
   Plus, Trash2, Pencil, X, TrendingUp, TrendingDown, Wallet, Users,
   CalendarCheck, BarChart3, Check, ChevronLeft, ChevronRight, Receipt, Package,
+  Search, UserPlus, User,
 } from "lucide-react";
 import { loadKey, saveKey } from "./storage";
 import PayrollLock from "./payroll-lock";
+import { blankCustomer } from "./salon-customers";
 import { STORES, storeName, BRAND } from "./stores";
 import {
   SERVICE_KEY, normalizeServices, incomeCategories, priceChipsByCategory,
@@ -54,6 +56,10 @@ const ASSISTANT_ITEMS_KEY = "finance:assistantItems";
 const DESIGNER_DEDUCTIONS_KEY = "finance:designerDeductions";
 const ITEM_TEMPLATES_KEY = "finance:staffItemTemplates";
 const MATERIALS_KEY = "finance:materials";
+// 顧客資料與班表預約：記帳時用來選客人（預約只讀不寫）
+const CUSTOMER_KEY = "customers:list";
+const APPT_KEY = "appointments:list";
+const LIVE_APPT_STATUSES = ["pending", "confirmed", "arrived", "done"];
 
 const ALL_STORES = "__all__";
 const NO_STORE = "__none__";
@@ -116,6 +122,7 @@ function groupTx(list) {
       map.set(gid, {
         groupId: gid, date: t.date, type: t.type, note: t.note,
         paymentMethod: t.paymentMethod, staffId: t.staffId, storeId: t.storeId || "",
+        customerId: t.customerId || "",
         items: [], amount: 0,
       });
       order.push(gid);
@@ -208,6 +215,7 @@ function buildTx(r, meta, groupId, id) {
     note: meta.note, paymentMethod: meta.paymentMethod, staffId: meta.staffId,
     storeId: meta.storeId || "",
   };
+  if (meta.type === "income" && meta.customerId) tx.customerId = meta.customerId;
   if (meta.type === "income" && r.category === "產品銷售" && !r.legacy) {
     tx.materialId = r.materialId || "";
     tx.qty = r.materialId ? (parseFloat(r.qty) || 0) : 0;
@@ -403,7 +411,155 @@ function CategoryLineEditor({ rows, categories, type, materials, priceChips, onC
   );
 }
 
-function TxForm({ onAdd, staff, materials, defaultStoreId, incomeCats, priceChips }) {
+function digitsOf(s) {
+  return String(s || "").replace(/\D/g, "");
+}
+function minToTime(m) {
+  const v = Number(m) || 0;
+  return String(Math.floor(v / 60)).padStart(2, "0") + ":" + String(v % 60).padStart(2, "0");
+}
+
+/** 某天班表上有綁顧客的預約（取消、沒來的不算），依時間排序 */
+function apptsOn(appointments, date) {
+  return (appointments || [])
+    .filter((a) => a.date === date && a.customerId && LIVE_APPT_STATUSES.includes(a.status))
+    .sort((a, b) => (Number(a.startMin) || 0) - (Number(b.startMin) || 0));
+}
+
+/**
+ * 記帳時選客人：輸入姓名、暱稱或電話（末幾碼也可以）就能找到；
+ * 當天班表上有預約的客人直接列出來點；找不到可以當場新增。
+ * 不選也可以照常記帳。
+ */
+function CustomerPicker({ customers, dayAppts, staff, value, onChange, onPickAppt, onCreate }) {
+  const [q, setQ] = useState("");
+  const [creating, setCreating] = useState(false);
+  const [newName, setNewName] = useState("");
+  const [newPhone, setNewPhone] = useState("");
+  const [err, setErr] = useState("");
+
+  const byId = useMemo(() => new Map((customers || []).map((c) => [c.id, c])), [customers]);
+  const picked = value ? byId.get(value) : null;
+
+  const results = useMemo(() => {
+    const t = q.trim().toLowerCase();
+    if (!t) return [];
+    const d = digitsOf(t);
+    const out = [];
+    for (const c of customers || []) {
+      const hit = (c.name || "").toLowerCase().includes(t)
+        || (c.nickname || "").toLowerCase().includes(t)
+        || (d.length >= 3 && digitsOf(c.phone).includes(d));
+      if (hit) {
+        out.push(c);
+        if (out.length >= 8) break;
+      }
+    }
+    return out;
+  }, [q, customers]);
+
+  const apptChips = (dayAppts || []).filter((a) => byId.has(a.customerId));
+
+  function choose(id) {
+    onChange(id);
+    setQ("");
+    setCreating(false);
+    setErr("");
+  }
+
+  function create() {
+    const name = newName.trim();
+    const phone = newPhone.trim();
+    if (!name) { setErr("請填客人姓名"); return; }
+    // 電話已經有人用了就直接選那位，避免同一個人建兩筆
+    const pd = digitsOf(phone);
+    const same = pd.length >= 8 ? (customers || []).find((c) => digitsOf(c.phone) === pd) : null;
+    choose(same ? same.id : onCreate({ name, phone }));
+    setNewName("");
+    setNewPhone("");
+  }
+
+  if (value) {
+    return (
+      <div style={{ display: "flex", alignItems: "center", gap: 8, background: SAGE_LIGHT, borderRadius: 8, padding: "8px 10px" }}>
+        <User size={15} color={SAGE} />
+        <div style={{ flex: 1, minWidth: 0, fontSize: 13, color: INK }}>
+          {picked ? (
+            <>
+              <span style={{ fontWeight: 600 }}>{picked.name || "未命名"}</span>
+              {picked.nickname && <span style={{ color: MUTED }}>（{picked.nickname}）</span>}
+              {picked.phone && <span style={{ color: MUTED, marginLeft: 6, fontFamily: "'IBM Plex Mono', monospace", fontSize: 12 }}>{picked.phone}</span>}
+            </>
+          ) : (
+            <span style={{ color: MUTED }}>（這位顧客的資料已被刪除）</span>
+          )}
+        </div>
+        <button type="button" className="chip" onClick={() => onChange("")}>換人</button>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+      {apptChips.length > 0 && (
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center" }}>
+          <span style={{ fontSize: 11.5, color: MUTED }}>這天有預約：</span>
+          {apptChips.map((a) => {
+            const c = byId.get(a.customerId);
+            const s = (staff || []).find((x) => x.id === a.staffId);
+            return (
+              <button key={a.id} type="button" className="chip" onClick={() => { onPickAppt(a); setQ(""); setCreating(false); }}>
+                {c.name || "未命名"} {minToTime(a.startMin)}{s ? " · " + s.name : ""}
+              </button>
+            );
+          })}
+        </div>
+      )}
+      <div style={{ position: "relative" }}>
+        <Search size={14} style={{ position: "absolute", left: 10, top: 11, color: MUTED }} />
+        <input className="ledger-input" style={{ paddingLeft: 30 }} value={q}
+          onChange={(e) => setQ(e.target.value)} placeholder="輸入姓名、暱稱或電話（末 3 碼以上）" />
+      </div>
+      {q.trim() && (
+        <div style={{ border: "1px solid " + PAPER_LINE, borderRadius: 6, background: "#FFFDF8", overflow: "hidden" }}>
+          {results.length === 0 ? (
+            <div style={{ padding: "8px 10px", fontSize: 12.5, color: MUTED }}>找不到符合的客人</div>
+          ) : results.map((c) => (
+            <button key={c.id} type="button" onClick={() => choose(c.id)} style={{
+              display: "flex", width: "100%", gap: 8, alignItems: "baseline", textAlign: "left", padding: "7px 10px",
+              border: "none", borderBottom: "1px solid " + PAPER_LINE, background: "transparent", cursor: "pointer",
+              fontFamily: "'IBM Plex Sans', sans-serif", fontSize: 13, color: INK,
+            }}>
+              <span style={{ fontWeight: 500 }}>{c.name || "未命名"}</span>
+              {c.nickname && <span style={{ color: MUTED, fontSize: 12 }}>（{c.nickname}）</span>}
+              <span style={{ marginLeft: "auto", color: MUTED, fontSize: 12, fontFamily: "'IBM Plex Mono', monospace" }}>{c.phone}</span>
+            </button>
+          ))}
+        </div>
+      )}
+      {creating ? (
+        <div style={{ background: PAPER, borderRadius: 8, padding: 8, display: "flex", flexDirection: "column", gap: 6 }}>
+          <div style={{ display: "flex", gap: 6 }}>
+            <input className="ledger-input" style={{ flex: 1, minWidth: 0 }} placeholder="姓名" value={newName} onChange={(e) => { setNewName(e.target.value); setErr(""); }} />
+            <input className="ledger-input" style={{ flex: 1, minWidth: 0 }} placeholder="手機（選填）" value={newPhone} onChange={(e) => setNewPhone(e.target.value)} />
+          </div>
+          {err && <div style={{ color: WINE, fontSize: 12 }}>{err}</div>}
+          <div style={{ display: "flex", gap: 6, justifyContent: "flex-end" }}>
+            <button type="button" className="ledger-btn" onClick={() => { setCreating(false); setErr(""); }}>取消</button>
+            <button type="button" className="ledger-btn ledger-btn-primary" onClick={create}><Check size={14} /> 建立並選取</button>
+          </div>
+        </div>
+      ) : onCreate && (
+        <button type="button" className="ledger-btn" style={{ fontSize: 12, alignSelf: "flex-start" }}
+          onClick={() => { setCreating(true); setNewName(digitsOf(q) ? "" : q.trim()); setNewPhone(digitsOf(q).length >= 8 ? q.trim() : ""); }}>
+          <UserPlus size={13} /> 找不到？新增客人
+        </button>
+      )}
+    </div>
+  );
+}
+
+function TxForm({ onAdd, staff, materials, defaultStoreId, incomeCats, priceChips, customers, appointments, onCreateCustomer }) {
   const [type, setType] = useState("income");
   const [date, setDate] = useState(todayStr());
   const [storeId, setStoreId] = useState(defaultStoreId || STORES[0].id);
@@ -411,13 +567,23 @@ function TxForm({ onAdd, staff, materials, defaultStoreId, incomeCats, priceChip
   const [note, setNote] = useState("");
   const [payment, setPayment] = useState("現金");
   const [staffId, setStaffId] = useState("");
+  const [customerId, setCustomerId] = useState("");
   const [error, setError] = useState("");
 
   const categories = type === "income" ? (incomeCats && incomeCats.length ? incomeCats : FALLBACK_INCOME) : EXPENSE_CATEGORIES;
+  const dayAppts = useMemo(() => apptsOn(appointments, date), [appointments, date]);
 
   useEffect(() => {
     setRows([]);
+    setCustomerId("");
   }, [type]);
+
+  // 點了班表上的預約：帶入客人，順便帶入設計師與分店（設計師已經選了就不覆蓋）
+  function pickAppt(a) {
+    setCustomerId(a.customerId);
+    if (!staffId && a.staffId && staff.some((s) => s.id === a.staffId)) setStaffId(a.staffId);
+    if (a.storeId && STORES.some((st) => st.id === a.storeId)) setStoreId(a.storeId);
+  }
 
   const total = rows.reduce((s, r) => s + (parseFloat(r.amount) || 0), 0);
 
@@ -437,9 +603,11 @@ function TxForm({ onAdd, staff, materials, defaultStoreId, incomeCats, priceChip
     onAdd(validRows, {
       type, date, note: note.trim(), paymentMethod: payment, storeId,
       staffId: type === "income" ? (staffId || null) : null,
+      customerId: type === "income" ? customerId : "",
     });
     setRows([]);
     setNote("");
+    setCustomerId("");
     setError("");
   }
 
@@ -456,6 +624,14 @@ function TxForm({ onAdd, staff, materials, defaultStoreId, incomeCats, priceChip
           <TrendingDown size={14} /> 支出
         </button>
       </div>
+
+      {type === "income" && (
+        <div className="field-label">
+          客人（選填，選了之後顧客資料看得到這筆消費）
+          <CustomerPicker customers={customers} dayAppts={dayAppts} staff={staff} value={customerId}
+            onChange={setCustomerId} onPickAppt={pickAppt} onCreate={onCreateCustomer} />
+        </div>
+      )}
 
       <label className="field-label">
         分店
@@ -518,13 +694,15 @@ function TxForm({ onAdd, staff, materials, defaultStoreId, incomeCats, priceChip
 }
 
 /** 記帳列表裡，修改一整筆（共用欄位 + 每個品項） */
-function GroupEditForm({ g, staff, materials, incomeCats, allTransactions, onSave, onCancel }) {
+function GroupEditForm({ g, staff, materials, incomeCats, allTransactions, customers, appointments, onCreateCustomer, onSave, onCancel }) {
   const isIncome = g.type === "income";
   const baseCats = isIncome ? (incomeCats && incomeCats.length ? incomeCats : FALLBACK_INCOME) : EXPENSE_CATEGORIES;
   const [date, setDate] = useState(g.date);
   const [storeId, setStoreId] = useState(g.storeId || STORES[0].id);
   const [payment, setPayment] = useState(g.paymentMethod || PAYMENT_METHODS[0]);
   const [staffId, setStaffId] = useState(g.staffId || "");
+  const [customerId, setCustomerId] = useState(g.customerId || "");
+  const dayAppts = useMemo(() => apptsOn(appointments, date), [appointments, date]);
   const [note, setNote] = useState(g.note || "");
   const [rows, setRows] = useState(() => g.items.map((i) => ({
     key: i.id, txId: i.id, category: i.category, amount: String(i.amount),
@@ -566,6 +744,7 @@ function GroupEditForm({ g, staff, materials, incomeCats, allTransactions, onSav
     onSave(valid, {
       date, storeId, paymentMethod: payment,
       staffId: isIncome ? (staffId || null) : null, note: note.trim(),
+      customerId: isIncome ? customerId : "",
     });
   }
 
@@ -594,6 +773,12 @@ function GroupEditForm({ g, staff, materials, incomeCats, allTransactions, onSav
           </label>
         )}
       </div>
+      {isIncome && (
+        <div className="field-label" style={{ marginBottom: 8 }}>客人
+          <CustomerPicker customers={customers} dayAppts={dayAppts} staff={staff} value={customerId}
+            onChange={setCustomerId} onPickAppt={(a) => setCustomerId(a.customerId)} onCreate={onCreateCustomer} />
+        </div>
+      )}
       <label className="field-label">備註
         <input className="ledger-input" value={note} onChange={(e) => setNote(e.target.value)} placeholder="例如：客人姓名、品項細節" />
       </label>
@@ -653,7 +838,7 @@ function GroupEditForm({ g, staff, materials, incomeCats, allTransactions, onSav
   );
 }
 
-function GroupRow({ g, staff, onDelete, onEdit, editCtx }) {
+function GroupRow({ g, staff, customerMap, onDelete, onEdit, editCtx }) {
   const [editing, setEditing] = useState(false);
   if (editing && onEdit) {
     return (
@@ -663,6 +848,7 @@ function GroupRow({ g, staff, onDelete, onEdit, editCtx }) {
     );
   }
   const s = staff.find((x) => x.id === g.staffId);
+  const cust = g.customerId && customerMap ? customerMap.get(g.customerId) : null;
   const isIncome = g.type === "income";
   const label = g.items.map((i) => i.category).join("、");
   return (
@@ -678,6 +864,11 @@ function GroupRow({ g, staff, onDelete, onEdit, editCtx }) {
           ) : (
             <span style={{ fontSize: 10, padding: "1px 7px", borderRadius: 999, background: "#EFEDE7", color: MUTED }}>
               未指定分店
+            </span>
+          )}
+          {cust && (
+            <span style={{ fontSize: 10, padding: "1px 7px", borderRadius: 999, background: SAGE_LIGHT, color: SAGE, fontWeight: 600 }}>
+              {cust.name || "未命名"}
             </span>
           )}
         </div>
@@ -792,7 +983,8 @@ function DailyPerformance({ transactions, staff, materials, focus, onFocus }) {
   );
 }
 
-function LedgerView({ transactions, allTransactions, staff, materials, defaultStoreId, incomeCats, priceChips, onAdd, onDelete, onUpdate }) {
+function LedgerView({ transactions, allTransactions, staff, materials, defaultStoreId, incomeCats, priceChips, customers, appointments, onCreateCustomer, onAdd, onDelete, onUpdate }) {
+  const customerMap = useMemo(() => new Map((customers || []).map((c) => [c.id, c])), [customers]);
   const [filterType, setFilterType] = useState("all");
   const [filterMonth, setFilterMonth] = useState(monthKey(todayStr()));
   // 在每日業績點了某位設計師：清單只顯示他那一天的記帳
@@ -822,7 +1014,8 @@ function LedgerView({ transactions, allTransactions, staff, materials, defaultSt
 
   return (
     <div style={{ display: "grid", gridTemplateColumns: "340px 1fr", gap: 20 }} className="responsive-grid">
-      <TxForm onAdd={onAdd} staff={staff} materials={materials} defaultStoreId={defaultStoreId} incomeCats={incomeCats} priceChips={priceChips} />
+      <TxForm onAdd={onAdd} staff={staff} materials={materials} defaultStoreId={defaultStoreId} incomeCats={incomeCats} priceChips={priceChips}
+        customers={customers} appointments={appointments} onCreateCustomer={onCreateCustomer} />
 
       <div style={{ display: "flex", flexDirection: "column", gap: 12, minWidth: 0 }}>
         <DailyPerformance transactions={transactions} staff={staff} materials={materials} focus={focus} onFocus={changeFocus} />
@@ -852,8 +1045,8 @@ function LedgerView({ transactions, allTransactions, staff, materials, defaultSt
             <div style={{ padding: 32, textAlign: "center", color: MUTED, fontSize: 13 }}>這個月還沒有記錄，開始記第一筆吧。</div>
           ) : (
             grouped.map((g) => (
-              <GroupRow key={g.groupId} g={g} staff={staff} onDelete={onDelete} onEdit={onUpdate}
-                editCtx={{ materials, incomeCats, allTransactions }} />
+              <GroupRow key={g.groupId} g={g} staff={staff} customerMap={customerMap} onDelete={onDelete} onEdit={onUpdate}
+                editCtx={{ materials, incomeCats, allTransactions, customers, appointments, onCreateCustomer }} />
             ))
           )}
         </div>
@@ -1667,18 +1860,24 @@ export default function FinanceApp() {
   const [designerDeductions, setDesignerDeductions] = useState([]);
   const [templates, setTemplates] = useState(DEFAULT_ASSISTANT_TEMPLATES);
   const [materials, setMaterials] = useState([]);
+  // 顧客與預約不在這裡自動存檔（顧客清單很大），只有記帳時新增客人才寫回
+  const [customers, setCustomers] = useState([]);
+  const [customersReady, setCustomersReady] = useState(false);
+  const [appointments, setAppointments] = useState([]);
 
   useEffect(() => {
     (async () => {
-      const [tx, st, cl, ai, dd, tpl, mat, svc] = await Promise.all([
+      const [tx, st, cl, ai, dd, tpl, mat, svc, cs, ap] = await Promise.all([
         loadKey(TX_KEY, []), loadKey(STAFF_KEY, []), loadKey(CLOSING_KEY, []),
         loadKey(ASSISTANT_ITEMS_KEY, []), loadKey(DESIGNER_DEDUCTIONS_KEY, []),
         loadKey(ITEM_TEMPLATES_KEY, DEFAULT_ASSISTANT_TEMPLATES), loadKey(MATERIALS_KEY, []),
-        loadKey(SERVICE_KEY, null),
+        loadKey(SERVICE_KEY, null), loadKey(CUSTOMER_KEY, null), loadKey(APPT_KEY, []),
       ]);
       setTransactions(tx); setStaff(st); setClosings(cl);
       setAssistantItems(ai); setDesignerDeductions(dd); setTemplates(tpl); setMaterials(mat);
       setServices(normalizeServices(svc));
+      setCustomers(Array.isArray(cs) ? cs : []); setCustomersReady(Array.isArray(cs));
+      setAppointments(Array.isArray(ap) ? ap : []);
       setLoaded(true);
     })();
   }, []);
@@ -1738,6 +1937,21 @@ export default function FinanceApp() {
       delta[m.id] ? { ...m, stock: Math.max(0, (Number(m.stock) || 0) + delta[m.id]) } : m
     )));
   }
+  /** 記帳時當場新增客人：寫回顧客資料，回傳新客人的 id */
+  // 存檔前重讀最新的整包清單再加進去；讀不到就不寫，避免把整份顧客資料蓋掉
+  const createCustomer = useCallback(({ name, phone }) => {
+    const c = { ...blankCustomer(), name, phone, source: "其他", notes: "在財務帳本記帳時新增" };
+    setCustomers((prev) => [c, ...prev]);
+    (async () => {
+      const latest = await loadKey(CUSTOMER_KEY, null);
+      if (!Array.isArray(latest)) {
+        window.alert("顧客資料讀取失敗，新客人「" + name + "」沒有存進顧客資料，請重新整理後再試。");
+        return;
+      }
+      saveKey(CUSTOMER_KEY, [c, ...latest.filter((x) => x.id !== c.id)]);
+    })();
+    return c.id;
+  }, []);
   const addStaff = useCallback((s) => setStaff((prev) => [...prev, s]), []);
   const updateStaff = useCallback((id, patch) => setStaff((prev) => prev.map((s) => (s.id === id ? { ...s, ...patch } : s))), []);
   const deleteStaff = useCallback((id) => setStaff((prev) => prev.filter((s) => s.id !== id)), []);
@@ -1879,7 +2093,8 @@ export default function FinanceApp() {
         </div>
 
         {tab === "dashboard" && <Dashboard transactions={visibleTx} allTransactions={transactions} staff={staff} storeFilter={storeFilter} />}
-        {tab === "ledger" && <LedgerView transactions={visibleTx} staff={staff} materials={materials} defaultStoreId={activeStoreId} incomeCats={incomeCats} priceChips={priceChips} onAdd={addTxGroup} onDelete={deleteTxGroup} onUpdate={updateTxGroup} allTransactions={transactions} />}
+        {tab === "ledger" && <LedgerView transactions={visibleTx} staff={staff} materials={materials} defaultStoreId={activeStoreId} incomeCats={incomeCats} priceChips={priceChips} onAdd={addTxGroup} onDelete={deleteTxGroup} onUpdate={updateTxGroup} allTransactions={transactions}
+          customers={customers} appointments={appointments} onCreateCustomer={customersReady ? createCustomer : null} />}
         {tab === "materials" && <MaterialsView materials={materials} onAdd={addMaterial} onUpdate={updateMaterial} onDelete={deleteMaterial} />}
         {/* 薪資刻意用完整 transactions，不受分店篩選影響——設計師的抽成是兩店合併計算 */}
         {tab === "staff" && (
