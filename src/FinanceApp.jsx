@@ -1943,7 +1943,7 @@ export default function FinanceApp() {
     const c = { ...blankCustomer(), name, phone, source: "其他", notes: "在財務帳本記帳時新增" };
     setCustomers((prev) => [c, ...prev]);
     (async () => {
-      const latest = await loadKey(CUSTOMER_KEY, null);
+      const latest = await loadKey(CUSTOMER_KEY, null, { fresh: true });
       if (!Array.isArray(latest)) {
         window.alert("顧客資料讀取失敗，新客人「" + name + "」沒有存進顧客資料，請重新整理後再試。");
         return;
