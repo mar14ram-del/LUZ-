@@ -1,4 +1,12 @@
-# 髮廊財務系統 — 部署到 GitHub Pages
+# LUZ STYLE 髮廊管理系統
+
+- 後台：https://mar14ram-del.github.io/LUZ-/ ｜客人預約頁：加上 `#/book`
+- **給 AI 的工作規則在 `CLAUDE.md`**；功能紀錄與未決事項在 `docs/HANDOFF.md`。
+- 以下是 2026 年 8 月最初建站時的安裝步驟，只有從零重建時才需要。
+
+---
+
+## 附錄：最初的部署步驟（GitHub Pages）
 
 這是財務模組的獨立網站版本，手機、電腦都能直接用網址開，不需要透過 Claude。
 資料存在 Supabase（免費雲端資料庫），需要帳號密碼登入才看得到資料。

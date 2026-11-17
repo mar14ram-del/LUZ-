@@ -37,3 +37,20 @@
 ## 6. 每月健檢
 執行 `db/health_check.sql`，把結果用白話報給使用者（孤兒帳、沒售價的商品、預約使用量）。
 加新功能前，先看上一個功能有沒有人在用。
+
+## 7. 踩過的坑（遇到 → 這樣做）
+- Supabase 專案清單是空的，或查詢回「沒有權限」→ 授權到錯的組織。請使用者中斷連接後重連並選 MAMA。不要反覆重試。
+- Supabase 寫入指令逾時 → 是使用者那邊的確認視窗沒按。請他按確認後重跑同一道指令，不要換方法繞過。
+- `execute_sql` 回「read-only transaction」→ 寫入要用 `apply_migration`。
+- 雲端工作階段 `git push` 或 GitHub API 寫入回 403 → 不是 token 壞了，是使用者要先安裝 Claude 的 GitHub App
+  （https://github.com/apps/claude/installations/select_target ，選 LUZ-）。裝好後直接 `git push` 即可，不需要 token。
+- 使用者要改價格、方案、員工、商品 → 是資料。第一則回覆就告訴他後台哪個按鈕可以改；不要要 token、不要請他截圖。
+- Supabase 後台的開關狀態 → 讀 `aria-checked`，不要看顏色或 "on" 字樣判斷。
+- 「外洩密碼保護」是 Pro 方案功能，免費方案開不了，不要再建議。
+- 測試資料庫防護時，用假的 key（例如 `__test__`）測完刪掉，不要拿真帳本試。
+- 想新增一份說明文件之前 → 先看能不能寫進這份或 `docs/HANDOFF.md`。規則只有這一份。
+
+## 8. 接手時看哪裡
+- 功能紀錄、商業規則、未決事項：`docs/HANDOFF.md`（可能過期，動手前照第 1 點查證）。
+- 資料庫腳本：`db/`（安全網、退回、健檢）。
+- 新增或改完一件事，在 `docs/HANDOFF.md` 最後一節補一行日期與結果。
