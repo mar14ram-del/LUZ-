@@ -52,7 +52,8 @@ export function resolvePhoto(p) {
 export function emptyRoster() {
   return {
     profiles: {},      // staffId -> { photo, blurb, specialties[], title, publicVisible,
-                       //              rates: { 服務id: { priceAdj, durationAdj } } }
+                       //              rates: { 服務id: { priceAdj, durationAdj, fixedTierId } } }
+                       //              fixedTierId：這位設計師固定用的方案，客人不用再選
     weekly: {},        // staffId -> { 0..6 -> storeId | null }
     overrides: {},     // "YYYY-MM-DD" -> { staffId -> storeId | null }
     closedDates: [],   // 兩店都公休
@@ -174,6 +175,20 @@ export function RosterEditor({ staff, services, roster, onSave }) {
   function setProfile(staffId, key, value) {
     const profiles = { ...draft.profiles };
     profiles[staffId] = { ...(profiles[staffId] || {}), [key]: value };
+    markDirty({ ...draft, profiles });
+  }
+
+  /** 這位設計師做這項服務固定用哪個方案（空字串＝讓客人選） */
+  function setFixedTier(staffId, serviceId, tierId) {
+    const profiles = { ...draft.profiles };
+    const prof = { ...(profiles[staffId] || {}) };
+    const rates = { ...(prof.rates || {}) };
+    const one = { ...(rates[serviceId] || {}) };
+    if (!tierId) delete one.fixedTierId; else one.fixedTierId = tierId;
+    if (Object.keys(one).length === 0) delete rates[serviceId];
+    else rates[serviceId] = one;
+    prof.rates = rates;
+    profiles[staffId] = prof;
     markDirty({ ...draft, profiles });
   }
 
@@ -416,6 +431,7 @@ export function RosterEditor({ staff, services, roster, onSave }) {
                               <div style={{ fontSize: 11, color: MUTED, lineHeight: 1.6, marginBottom: 9 }}>
                                 填加價或減價的金額，會套用到該服務的所有分級。
                                 例如染髮填 +200，短、中長、長、特長都各加 200。留空就跟共同價目一樣。
+                                有分方案的服務可以設「固定方案」：客人選這位設計師時就不用再選方案，記帳時也會自動帶入。
                               </div>
                               <div className="rt-table">
                                 <div className="rt-row rt-head">
@@ -426,8 +442,10 @@ export function RosterEditor({ staff, services, roster, onSave }) {
                                   const hasD = r.durationAdj !== undefined && r.durationAdj !== "";
                                   const hasP = r.priceAdj !== undefined && r.priceAdj !== "";
                                   const base = rangeLabel(sv);
+                                  const tiers = (sv.tiers || []);
                                   return (
-                                    <div key={sv.id} className="rt-row">
+                                    <React.Fragment key={sv.id}>
+                                    <div className="rt-row">
                                       <span style={{ fontSize: 13 }}>
                                         {sv.name}
                                         <span style={{ fontSize: 10.5, color: MUTED, marginLeft: 6 }}>{base}</span>
@@ -446,6 +464,20 @@ export function RosterEditor({ staff, services, roster, onSave }) {
                                         onChange={(e) => setRate(d.id, sv.id, "priceAdj", e.target.value)}
                                       />
                                     </div>
+                                    {tiers.length > 1 && (
+                                      <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: MUTED, margin: "-1px 0 6px 10px" }}>
+                                        固定方案
+                                        <select className="ledger-input" style={{ flex: "0 1 220px", fontSize: 12.5, padding: "5px 8px" }}
+                                          value={r.fixedTierId || ""}
+                                          onChange={(e) => setFixedTier(d.id, sv.id, e.target.value)}>
+                                          <option value="">讓客人自己選</option>
+                                          {tiers.map((t) => (
+                                            <option key={t.id} value={t.id}>{(t.label || "標準") + "　NT$" + (Number(t.price) || 0).toLocaleString()}</option>
+                                          ))}
+                                        </select>
+                                      </label>
+                                    )}
+                                    </React.Fragment>
                                   );
                                 })}
                               </div>

@@ -274,6 +274,38 @@ export function priceChipsByCategory(services) {
   return out;
 }
 
+/**
+ * 每位設計師的固定方案（後台排班頁設定 rates[服務id].fixedTierId）
+ * 回傳 { 設計師id: { 服務名稱: { chipId, price, label } } }，記帳時選了設計師就自動帶入
+ */
+export function staffFixedPlans(roster, services) {
+  const out = {};
+  const profiles = (roster && roster.profiles) || {};
+  Object.keys(profiles).forEach((staffId) => {
+    const rates = (profiles[staffId] && profiles[staffId].rates) || {};
+    (services || []).forEach((sv) => {
+      const id = (rates[sv.id] || {}).fixedTierId;
+      if (!id || !tiersOf(sv).some((t) => t.id === id)) return;
+      const e = effectiveTier(roster, staffId, sv, id);
+      (out[staffId] ||= {})[sv.name] = { chipId: id, price: e.price, label: e.label };
+    });
+  });
+  return out;
+}
+
+/** 這一列如果是用價格按鈕選的（不是手打金額），換成設計師的固定方案價格，保留加價項目 */
+export function applyPlan(r, plan, priceChips) {
+  const fixed = plan && plan[r.category];
+  if (!fixed || r.chipId === fixed.chipId) return r;
+  const entry = (priceChips || {})[r.category];
+  if (!entry || !r.chipId || !entry.chips.some((c) => c.id === r.chipId)) return r;
+  const extra = (r.addonIds || []).reduce((t, aid) => {
+    const a = (entry.addons || []).find((x) => x.id === aid);
+    return t + (a ? a.price : 0);
+  }, 0);
+  return { ...r, chipId: fixed.chipId, amount: String(fixed.price + extra) };
+}
+
 /** 收入分類清單 = 服務名稱 + 固定兩項 */
 export function incomeCategories(services) {
   const names = (services || []).map((s) => s.name).filter(Boolean);

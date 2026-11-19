@@ -13,7 +13,7 @@ import PayrollLock from "./payroll-lock";
 import { blankCustomer } from "./salon-customers";
 import { STORES, storeName, BRAND } from "./stores";
 import {
-  SERVICE_KEY, normalizeServices, incomeCategories, priceChipsByCategory,
+  SERVICE_KEY, normalizeServices, incomeCategories, priceChipsByCategory, staffFixedPlans, applyPlan,
 } from "./services";
 
 const FONT_IMPORT = `@import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap');`;
@@ -192,9 +192,10 @@ function last6Months(mk) {
  * 表單一開始建立、收入/支出切換、以及手動改分類時）。
  * 分級是不是「起價」不影響這裡的自動選擇，起價只是顯示上多一個「起」字。
  */
-function defaultRowFor(category, priceChips) {
+function defaultRowFor(category, priceChips, plan) {
   const entry = (priceChips || {})[category];
-  const lowest = entry && entry.chips.length
+  const fixed = plan && plan[category];
+  const lowest = fixed ? { id: fixed.chipId, price: fixed.price } : entry && entry.chips.length
     ? entry.chips.slice().sort((a, b) => a.price - b.price)[0]
     : null;
   return {
@@ -275,7 +276,7 @@ function ConfirmDelete({ onConfirm }) {
   );
 }
 
-function CategoryLineEditor({ rows, categories, type, materials, priceChips, onChange }) {
+function CategoryLineEditor({ rows, categories, type, materials, priceChips, plan, planOwner, onChange }) {
   function updateRow(id, patch) {
     onChange(rows.map((r) => (r.id === id ? { ...r, ...patch } : r)));
   }
@@ -285,7 +286,7 @@ function CategoryLineEditor({ rows, categories, type, materials, priceChips, onC
     if (rows.some((r) => r.category === category)) {
       onChange(rows.filter((r) => r.category !== category));
     } else {
-      onChange([...rows, defaultRowFor(category, type === "income" ? priceChips : null)]);
+      onChange([...rows, defaultRowFor(category, type === "income" ? priceChips : null, type === "income" ? plan : null)]);
     }
   }
 
@@ -338,7 +339,12 @@ function CategoryLineEditor({ rows, categories, type, materials, priceChips, onC
         return (
           <div key={r.id} style={{ display: "flex", flexDirection: "column", gap: 6, padding: 8, background: PAPER, borderRadius: 8 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-              <span style={{ flex: 1, fontSize: 13, fontWeight: 600, color: INK }}>{r.category}</span>
+              <span style={{ flex: 1, fontSize: 13, fontWeight: 600, color: INK }}>
+                {r.category}
+                {type === "income" && plan && plan[r.category] && r.chipId === plan[r.category].chipId && (
+                  <span style={{ fontSize: 11, fontWeight: 400, color: BRASS, marginLeft: 6 }}>{planOwner} 的固定方案</span>
+                )}
+              </span>
               <span style={{ fontSize: 13, fontFamily: "'IBM Plex Mono', monospace", color: MUTED }}>{fmtMoney(parseFloat(r.amount) || 0)}</span>
               <button type="button" className="ledger-icon-btn" onClick={() => toggleCategory(r.category)} aria-label="移除這個分類"><X size={14} /></button>
             </div>
@@ -559,7 +565,7 @@ function CustomerPicker({ customers, dayAppts, staff, value, onChange, onPickApp
   );
 }
 
-function TxForm({ onAdd, staff, materials, defaultStoreId, incomeCats, priceChips, customers, appointments, onCreateCustomer }) {
+function TxForm({ onAdd, staff, materials, defaultStoreId, incomeCats, priceChips, staffPlans, customers, appointments, onCreateCustomer }) {
   const [type, setType] = useState("income");
   const [date, setDate] = useState(todayStr());
   const [storeId, setStoreId] = useState(defaultStoreId || STORES[0].id);
@@ -577,6 +583,14 @@ function TxForm({ onAdd, staff, materials, defaultStoreId, incomeCats, priceChip
     setRows([]);
     setCustomerId("");
   }, [type]);
+
+  // 選了設計師：他有固定方案的分類，金額自動換成他的價格（自己手打的金額不動）
+  const plan = (staffPlans || {})[staffId] || null;
+  useEffect(() => {
+    if (type !== "income") return;
+    setRows((prev) => prev.map((r) => applyPlan(r, plan, priceChips)));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [staffId, staffPlans]);
 
   // 點了班表上的預約：帶入客人，順便帶入設計師與分店（設計師已經選了就不覆蓋）
   function pickAppt(a) {
@@ -655,7 +669,8 @@ function TxForm({ onAdd, staff, materials, defaultStoreId, incomeCats, priceChip
 
       <div className="field-label">
         分類與金額（可複選，例如剪髮＋染髮＋買產品，金額自動加總）
-        <CategoryLineEditor rows={rows} categories={categories} type={type} materials={materials} priceChips={priceChips} onChange={setRows} />
+        <CategoryLineEditor rows={rows} categories={categories} type={type} materials={materials} priceChips={priceChips}
+          plan={plan} planOwner={(staff.find((s) => s.id === staffId) || {}).name || ""} onChange={setRows} />
       </div>
 
       {type === "income" && staff.length > 0 && (
@@ -983,7 +998,7 @@ function DailyPerformance({ transactions, staff, materials, focus, onFocus }) {
   );
 }
 
-function LedgerView({ transactions, allTransactions, staff, materials, defaultStoreId, incomeCats, priceChips, customers, appointments, onCreateCustomer, onAdd, onDelete, onUpdate }) {
+function LedgerView({ transactions, allTransactions, staff, materials, defaultStoreId, incomeCats, priceChips, staffPlans, customers, appointments, onCreateCustomer, onAdd, onDelete, onUpdate }) {
   const customerMap = useMemo(() => new Map((customers || []).map((c) => [c.id, c])), [customers]);
   const [filterType, setFilterType] = useState("all");
   const [filterMonth, setFilterMonth] = useState(monthKey(todayStr()));
@@ -1014,7 +1029,7 @@ function LedgerView({ transactions, allTransactions, staff, materials, defaultSt
 
   return (
     <div style={{ display: "grid", gridTemplateColumns: "340px 1fr", gap: 20 }} className="responsive-grid">
-      <TxForm onAdd={onAdd} staff={staff} materials={materials} defaultStoreId={defaultStoreId} incomeCats={incomeCats} priceChips={priceChips}
+      <TxForm onAdd={onAdd} staff={staff} materials={materials} defaultStoreId={defaultStoreId} incomeCats={incomeCats} priceChips={priceChips} staffPlans={staffPlans}
         customers={customers} appointments={appointments} onCreateCustomer={onCreateCustomer} />
 
       <div style={{ display: "flex", flexDirection: "column", gap: 12, minWidth: 0 }}>
@@ -1864,6 +1879,8 @@ export default function FinanceApp() {
   const [customers, setCustomers] = useState([]);
   const [customersReady, setCustomersReady] = useState(false);
   const [appointments, setAppointments] = useState([]);
+  // 排班設定只讀不寫（固定方案用），存檔在排班頁
+  const [roster, setRoster] = useState(null);
 
   useEffect(() => {
     (async () => {
@@ -1873,6 +1890,7 @@ export default function FinanceApp() {
         loadKey(ITEM_TEMPLATES_KEY, DEFAULT_ASSISTANT_TEMPLATES), loadKey(MATERIALS_KEY, []),
         loadKey(SERVICE_KEY, null), loadKey(CUSTOMER_KEY, null), loadKey(APPT_KEY, []),
       ]);
+      loadKey("appointments:roster", null).then((r) => setRoster(r));
       setTransactions(tx); setStaff(st); setClosings(cl);
       setAssistantItems(ai); setDesignerDeductions(dd); setTemplates(tpl); setMaterials(mat);
       setServices(normalizeServices(svc));
@@ -1897,6 +1915,7 @@ export default function FinanceApp() {
     [services, transactions]
   );
   const priceChips = useMemo(() => priceChipsByCategory(services), [services]);
+  const staffPlans = useMemo(() => staffFixedPlans(roster, services), [roster, services]);
 
   const visibleTx = useMemo(() => filterByStore(transactions, storeFilter), [transactions, storeFilter]);
   const activeStoreId = storeFilter === ALL_STORES || storeFilter === NO_STORE ? STORES[0].id : storeFilter;
@@ -2094,7 +2113,7 @@ export default function FinanceApp() {
         </div>
 
         {tab === "dashboard" && <Dashboard transactions={visibleTx} allTransactions={transactions} staff={staff} storeFilter={storeFilter} />}
-        {tab === "ledger" && <LedgerView transactions={visibleTx} staff={staff} materials={materials} defaultStoreId={activeStoreId} incomeCats={incomeCats} priceChips={priceChips} onAdd={addTxGroup} onDelete={deleteTxGroup} onUpdate={updateTxGroup} allTransactions={transactions}
+        {tab === "ledger" && <LedgerView transactions={visibleTx} staff={staff} materials={materials} defaultStoreId={activeStoreId} incomeCats={incomeCats} priceChips={priceChips} staffPlans={staffPlans} onAdd={addTxGroup} onDelete={deleteTxGroup} onUpdate={updateTxGroup} allTransactions={transactions}
           customers={customers} appointments={appointments} onCreateCustomer={customersReady ? createCustomer : null} />}
         {tab === "materials" && <MaterialsView materials={materials} onAdd={addMaterial} onUpdate={updateMaterial} onDelete={deleteMaterial} />}
         {/* 薪資刻意用完整 transactions，不受分店篩選影響——設計師的抽成是兩店合併計算 */}

@@ -137,9 +137,15 @@ function defaultTierId(sv) {
   return ts.slice().sort((a, b) => (Number(a.price) || 0) - (Number(b.price) || 0))[0].id;
 }
 
-/** 某位設計師某個分級的實際價格與時間（設計師的加價套用到所有分級） */
+/** 這位設計師做這項服務固定用的方案 id（後台排班頁設定；沒設＝讓客人選） */
+function fixedTierOf(designer, sv) {
+  const id = (((designer && designer.rates) || {})[sv && sv.id] || {}).fixedTierId;
+  return id && tiersOf(sv).some((t) => t.id === id) ? id : "";
+}
+
+/** 某位設計師某個分級的實際價格與時間（設計師的加價套用到所有分級；有固定方案就用固定的） */
 function effectiveTier(designer, sv, tierId) {
-  const t = tierById(sv, tierId);
+  const t = tierById(sv, fixedTierOf(designer, sv) || tierId);
   if (!t) return { price: 0, durationMin: 0, label: "", from: false };
   const a = ((designer && designer.rates) || {})[sv.id] || {};
   return {
@@ -658,7 +664,7 @@ export default function PublicBookingPage() {
       const has = prev.some((x) => x.serviceId === sv.id);
       return has
         ? prev.filter((x) => x.serviceId !== sv.id)
-        : [...prev, { serviceId: sv.id, tierId: defaultTierId(sv), addonIds: [] }];
+        : [...prev, { serviceId: sv.id, tierId: fixedTierOf(staffById[staffId], sv) || defaultTierId(sv), addonIds: [] }];
     });
     setDate(""); setStartMin(null);
   }
@@ -688,7 +694,7 @@ export default function PublicBookingPage() {
   function svcLabel(p) {
     const sv = services.find((s) => s.id === p.serviceId);
     if (!sv) return "";
-    const t = tierById(sv, p.tierId);
+    const t = tierById(sv, fixedTierOf(staffId ? staffById[staffId] : null, sv) || p.tierId);
     const labels = [];
     if (t && t.label) labels.push(t.label);
     (p.addonIds || []).forEach((aid) => {
@@ -1463,7 +1469,12 @@ export default function PublicBookingPage() {
             const pool = candidateStaff.length ? candidateStaff : [null];
             // 這個服務所有分級、所有可能設計師的價格與時間範圍
             const es = [];
-            tiersOf(sv).forEach((t) => pool.forEach((d) => es.push(effectiveTier(d, sv, t.id))));
+            pool.forEach((d) => {
+              const f = fixedTierOf(d, sv);
+              (f ? [f] : tiersOf(sv).map((t) => t.id)).forEach((id) => es.push(effectiveTier(d, sv, id)));
+            });
+            const chosen = staffId ? staffById[staffId] : null;
+            const fixedId = fixedTierOf(chosen, sv);
             const ps = es.map((e) => e.price);
             const ds = es.map((e) => e.durationMin);
             const anyFrom = es.some((e) => e.from);
@@ -1482,7 +1493,19 @@ export default function PublicBookingPage() {
                   </span>
                 </button>
 
-                {on && hasTiers(sv) && (
+                {on && hasTiers(sv) && fixedId && (() => {
+                  const fe = effectiveTier(chosen, sv, fixedId);
+                  return (
+                    <div className="tier-row">
+                      <div className="tier tier-on" style={{ cursor: "default" }}>
+                        <span className="tier-t">{chosen.name} 的{sv.name}</span>
+                        <span className="tier-p">{fmtMoney(fe.price)}{fe.from ? " 起" : ""}</span>
+                      </div>
+                    </div>
+                  );
+                })()}
+
+                {on && hasTiers(sv) && !fixedId && (
                   <>
                     <div className="tier-label">長度／方案</div>
                     <div className="tier-row">
