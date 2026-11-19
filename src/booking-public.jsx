@@ -450,6 +450,31 @@ export default function PublicBookingPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [entry]);
 
+  // 「來過了」又用 LINE 登入：向雲端問這個 LINE 之前留過的姓名手機，有的話就不用再填
+  // status: idle 還沒問 / loading / found 有舊資料 / none 沒有（要填一次）
+  const [saved, setSaved] = useState({ status: "idle", name: "", phone: "" });
+  const [editContact, setEditContact] = useState(false);
+  useEffect(() => {
+    if (form.isNewCustomer || !form.lineUserId || saved.status !== "idle") return;
+    let alive = true;
+    setSaved({ status: "loading", name: "", phone: "" });
+    (async () => {
+      const r = await callMyBookings({ action: "profile" });
+      if (!alive) return;
+      const name = r.ok && r.profile ? String(r.profile.name || "").trim() : "";
+      const phone = r.ok && r.profile ? String(r.profile.phone || "").trim() : "";
+      if (name && isValidPhone(phone)) {
+        setSaved({ status: "found", name, phone });
+        setForm((f) => ({ ...f, customerName: f.customerName.trim() ? f.customerName : name, phone: f.phone.trim() ? f.phone : phone }));
+      } else {
+        setSaved({ status: "none", name: "", phone: "" });
+      }
+    })();
+    return () => { alive = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [form.isNewCustomer, form.lineUserId, saved.status]);
+  const useSavedContact = !form.isNewCustomer && !!form.lineUserId && saved.status === "found" && !editContact;
+
   const stores = (config && config.stores) || [];
   const designers = (config && config.designers) || [];
   const services = (config && config.services) || [];
@@ -1636,19 +1661,39 @@ export default function PublicBookingPage() {
               </div>
             </div>
 
-            <label className="lbl">姓名
+            {useSavedContact ? (
+              <div style={{
+                display: "flex", alignItems: "center", gap: 10, padding: "12px 14px", marginBottom: 14,
+                borderRadius: 9, background: SAGE_LIGHT, color: SAGE, fontSize: 13.5, lineHeight: 1.6,
+              }}>
+                <Check size={16} style={{ flexShrink: 0 }} />
+                <div style={{ flex: 1 }}>
+                  歡迎回來，{saved.name}！<br />
+                  <span style={{ fontSize: 12 }}>手機 {saved.phone.replace(/\D/g, "").replace(/^(\d{4})\d+(\d{3})$/, "$1***$2")}，不用再填一次</span>
+                </div>
+                <button type="button" onClick={() => setEditContact(true)}
+                  style={{ border: "none", background: "none", color: SAGE, textDecoration: "underline", fontSize: 12, cursor: "pointer", padding: 4 }}>
+                  不是我／修改
+                </button>
+              </div>
+            ) : (
+              <>
+              <label className="lbl">姓名
               <input className="inp" value={form.customerName} onChange={(e) => setF("customerName", e.target.value)} placeholder="王小明" maxLength={40} />
-            </label>
-            <label className="lbl">手機號碼
+              </label>
+              <label className="lbl">手機號碼
               <input className="inp" type="tel" inputMode="tel" value={form.phone}
                 onChange={(e) => setF("phone", e.target.value)} placeholder="0912345678" maxLength={30} />
               {form.phone && !isValidPhone(form.phone) && (
                 <span style={{ color: WINE, fontSize: 11.5 }}>手機號碼看起來不完整，請再確認一次。</span>
               )}
-            </label>
-            <label className="lbl">LINE ID<span style={{ fontSize: 11 }}>（選填，方便我們用 LINE 通知您）</span>
+              </label>
+              <label className="lbl">LINE ID<span style={{ fontSize: 11 }}>（選填，方便我們用 LINE 通知您）</span>
               <input className="inp" value={form.lineId} onChange={(e) => setF("lineId", e.target.value)} maxLength={60} />
-            </label>
+              </label>
+
+              </>
+            )}
 
             {liffReady && (
               <div className="lbl" style={{ marginTop: 2 }}>
