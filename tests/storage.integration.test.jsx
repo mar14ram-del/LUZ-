@@ -22,6 +22,7 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 const recs = (n, p = "t") => Array.from({ length: n }, (_, i) => ({ id: p + i, amount: 800, type: "income", date: "2026-10-01", category: "剪髮", name: "客" + i, phone: "09" + (10000000 + i), paymentMethod: "現金", stock: 0, unit: "瓶", tags: [], visits: [] }));
 const CHECKS = {
   "S16": (v) => expect(v).toBe(12),
+  "S17": (v) => expect(v).toBe("false／700／刪1筆=true"),
   "S1": (v) => expect(v).toMatch(/^627；有跳提醒/),
   "S2": (v) => expect(v).toMatch(/^6849；有跳提醒/),
   "S3": (v) => expect(v).toBe(0),
@@ -170,6 +171,17 @@ test("S13", async () => {
   const A = await device(); const a = await A.loadKey("finance:transactions", []);
   const ok = await A.saveKey("finance:transactions", a.slice(0, 10));
   out("S13 一次刪掉 9 成資料(100→10) → 存檔回報／雲端筆數", ok + "／" + (await get("finance:transactions")).value.length);
+});
+
+// 2026-11-17 真實事故：舊畫面一次存檔「刪 66 筆新帳、加回 29 筆舊帳」，筆數只少 9%，舊防護攔不到
+test("S17", async () => {
+  await put("finance:transactions", recs(700));
+  const A = await device(); const a = await A.loadKey("finance:transactions", []);
+  const stale = [...recs(29, "old"), ...a.slice(66)];
+  const bad = await A.saveKey("finance:transactions", stale);
+  const afterBad = (await get("finance:transactions")).value.length;
+  const one = await A.saveKey("finance:transactions", a.slice(1));   // 正常刪一筆要放行
+  out("S17 舊畫面一次刪66筆加29筆 → 存檔回報／雲端筆數／正常刪一筆", bad + "／" + afterBad + "／刪1筆=" + one);
 });
 
 test("S14", async () => {

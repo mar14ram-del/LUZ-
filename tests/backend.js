@@ -14,6 +14,12 @@ function guardUpdate(old, value) {
     const n = Array.isArray(value) ? value.length : 0;
     if (n < old.value.length * 0.5) return { error: { message: "kv_guard: 筆數掉太多，已擋下", code: "P0001" } };
   }
+  // 比照 db/03_kv_guard_ids.sql：一次被拿掉太多 id 也擋
+  if (Array.isArray(old.value) && old.value.length >= 50 && Array.isArray(value)) {
+    const keep = new Set(value.filter((x) => x && x.id != null).map((x) => x.id));
+    const removed = old.value.filter((x) => x && x.id != null && !keep.has(x.id)).length;
+    if (removed > Math.max(10, old.value.length * 0.02)) return { error: { message: "kv_guard: 一次被拿掉太多筆，已擋下", code: "P0001" } };
+  }
   return {};
 }
 const pick = (row, cols) => Object.fromEntries(cols.split(",").map((c) => [c, row[c]]));
