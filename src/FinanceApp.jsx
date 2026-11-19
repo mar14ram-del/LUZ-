@@ -316,10 +316,10 @@ function CategoryLineEditor({ rows, categories, type, materials, priceChips, onC
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
       {/* 分類：可複選，點一下加入 / 再點移除 */}
-      <div style={{ display: "flex", gap: 5, flexWrap: "wrap" }}>
+      <div style={{ display: "flex", gap: 11, flexWrap: "wrap" }}>
         {categories.map((c) => (
           <button key={c} type="button"
-            className={"pricechip" + (activeCats.has(c) ? " pricechip-on" : "")}
+            className={"pricechip catchip" + (activeCats.has(c) ? " pricechip-on" : "")}
             onClick={() => toggleCategory(c)}>
             {activeCats.has(c) ? "✓ " : ""}{c}
           </button>
@@ -2029,6 +2029,7 @@ export default function FinanceApp() {
         .pricechip:hover { border-color: ${BRASS}; color: ${INK}; }
         .pricechip-on { background: ${BRASS_LIGHT}; border-color: ${BRASS}; color: ${BRASS}; font-weight: 600; }
         .pricechip-add { border-style: dashed; }
+        .catchip { font-size: 18px; padding: 15px 22px; border-radius: 10px; }
         .toggle-pill {
           flex: 1; display: inline-flex; align-items: center; justify-content: center; gap: 6px;
           font-family: 'IBM Plex Sans', sans-serif; font-size: 13px; font-weight: 500; padding: 8px 0;
