@@ -38,14 +38,57 @@ const cache = new Map();
 const remote = new Map();   // 雲端實際的那一份（合併過別台的改動後，可能比畫面上的新）
 const versions = new Map();
 const failed = new Set();
-const warned = new Set();
+// pending ：沒存進雲端的 key → 這台最後一次想存的內容。畫面上有，雲端沒有，重試時要補存
+const pending = new Map();
 
-function warnOnce(tag, message) {
-  if (warned.has(tag)) return;
-  warned.add(tag);
-  if (typeof window !== "undefined" && typeof window.alert === "function") {
-    try { window.alert(message); } catch (e) { /* 測試環境沒有 alert */ }
+// ---------------------------------------------------------------------
+// 存檔狀態：畫面上方的紅色警示欄（SaveStatusBanner.jsx）訂閱這裡。
+// 以前用 alert 只跳一次，員工按掉就不知道這台已經存不進去，帳隔天就「不見」。
+// ---------------------------------------------------------------------
+const listeners = new Set();
+export function getSaveStatus() {
+  return { readFailed: [...failed], unsaved: [...pending.keys()], ok: failed.size === 0 && pending.size === 0 };
+}
+export function subscribeSaveStatus(fn) {
+  listeners.add(fn);
+  return () => listeners.delete(fn);
+}
+function notify() {
+  const s = getSaveStatus();
+  listeners.forEach((fn) => { try { fn(s); } catch (e) { /* 單一畫面出錯不影響存檔 */ } });
+}
+
+/**
+ * 重新嘗試：重讀讀失敗的 key、補存沒存成的內容。每輪之間等 gap 毫秒，最多 tries 輪。
+ * 全部成功回傳 true。onAttempt(第幾輪, 共幾輪) 給畫面顯示進度。
+ *
+ * 讀失敗的 key 重讀成功後「不」放進 cache：這台畫面上拿到的是空的預設值，
+ * 存檔時 base 必須是 null，合併才會保留雲端全部、只加上這台新增的。
+ * （如果把雲端那份當 base，合併會以為這台把帳全部刪了。）
+ */
+export async function retrySaves(opts) {
+  const tries = (opts && opts.tries) || 3;
+  const gap = opts && opts.gap != null ? opts.gap : 1000;
+  const onAttempt = opts && opts.onAttempt;
+  for (let i = 1; i <= tries; i++) {
+    if (onAttempt) onAttempt(i, tries);
+    for (const key of [...failed]) {
+      try {
+        const row = await fetchRow(key);
+        failed.delete(key);
+        versions.set(key, row.version);
+        cache.delete(key);
+        if (row.found) remote.set(key, row.value); else remote.delete(key);
+      } catch (e) { /* 這輪還是讀不到，下一輪再試 */ }
+    }
+    if (failed.size === 0) {
+      for (const [key, value] of [...pending]) await saveKey(key, value);
+    }
+    notify();
+    if (failed.size === 0 && pending.size === 0) return true;
+    if (i < tries) await new Promise((r) => setTimeout(r, gap));
   }
+  return false;
 }
 
 /** 直接問雲端這個 key 現在的內容與版本。讀不到會丟出錯誤。 */
@@ -133,7 +176,7 @@ export async function loadKey(key, fallback, opts) {
   } catch (e) {
     console.error("[storage] 讀取失敗", key, e);
     failed.add(key);
-    warnOnce("read", "資料讀取失敗（可能是網路不穩）。為了避免蓋掉雲端資料，這次開啟的畫面不會存檔，請重新整理頁面。");
+    notify();
     return fallback;
   }
 }
@@ -152,11 +195,13 @@ export function saveKey(key, value) {
 
 async function doSave(key, value) {
   if (failed.has(key)) {
-    console.error("[storage] 這個 key 讀取失敗過，為了安全不寫入：", key);
-    warnOnce("blocked", "剛剛有資料沒有讀成功，這次的修改不會存檔。請重新整理頁面後再操作一次。");
+    console.error("[storage] 這個 key 讀取失敗過，為了安全先不寫入，等重試：", key);
+    pending.set(key, value);
+    notify();
     return false;
   }
-  if (cache.has(key) && same(cache.get(key), value)) return true;    // 內容沒變：不寫
+  const done = () => { if (pending.delete(key)) notify(); return true; };
+  if (cache.has(key) && same(cache.get(key), value)) return done();  // 內容沒變：不寫
 
   const base = cache.has(key) ? cache.get(key) : null;               // 這台上次看到的那一份
   try {
@@ -200,7 +245,7 @@ async function doSave(key, value) {
         versions.set(key, newVersion);
         remote.set(key, toWrite);
         cache.set(key, value);                                       // 快取＝這台畫面上的那一份
-        return true;
+        return done();
       }
       // 沒寫成：雲端被別台改過了 → 讀最新的，把「我這次的改動」合併上去再試
       const latest = await fetchRow(key);
@@ -209,15 +254,15 @@ async function doSave(key, value) {
       if (!merged.ok) throw new Error("conflict");
       versions.set(key, latest.version);
       remote.set(key, latest.value);
-      if (same(merged.value, latest.value)) { cache.set(key, value); return true; }
+      if (same(merged.value, latest.value)) { cache.set(key, value); return done(); }
       toWrite = merged.value;
     }
     throw new Error("conflict");
   } catch (e) {
+    // 網路斷線、資料庫安全網擋下、跟別台衝突……不論哪種，都記下來讓警示欄顯示、可以重試
     console.error("[storage] 寫入失敗", key, e && e.message);
-    if (e && e.message === "conflict") {
-      warnOnce("conflict:" + key, "另一台裝置剛剛改過同一份資料，這次的修改沒有存成功。請重新整理頁面後再操作一次。");
-    }
+    pending.set(key, value);
+    notify();
     return false;
   }
 }
@@ -257,7 +302,8 @@ export function clearCache() {
   remote.clear();
   versions.clear();
   failed.clear();
-  warned.clear();
+  pending.clear();
+  notify();
 }
 
 function safeParse(text, fallback) {
@@ -280,7 +326,7 @@ const windowStorage = {
       } catch (e) {
         console.error("[storage] 讀取失敗", key, e);
         failed.add(key);
-        warnOnce("read", "資料讀取失敗（可能是網路不穩）。為了避免蓋掉雲端資料，這次開啟的畫面不會存檔，請重新整理頁面。");
+        notify();
         throw e;
       }
     }
@@ -314,5 +360,5 @@ if (typeof window !== "undefined") {
   window.storage = windowStorage;
 }
 
-export default { loadKey, saveKey, removeKey, listKeys, clearCache };
+export default { loadKey, saveKey, removeKey, listKeys, clearCache, getSaveStatus, subscribeSaveStatus, retrySaves };
 export { windowStorage };

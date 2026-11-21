@@ -5,6 +5,7 @@ import FinanceApp from "./FinanceApp";
 import CustomerApp from "./salon-customers";
 import AppointmentApp from "./salon-appointments";
 import PublicBookingPage from "./booking-public";
+import SaveStatusBanner from "./SaveStatusBanner";
 
 const PAPER = "#F6F1E6";
 const PAPER_LINE = "#E3D8BE";
@@ -81,6 +82,7 @@ export default function App() {
 
   return (
     <div style={{ background: PAPER, minHeight: "100vh" }}>
+      <SaveStatusBanner />
       <div
         style={{
           display: "flex",

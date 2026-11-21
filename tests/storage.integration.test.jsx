@@ -23,6 +23,9 @@ const recs = (n, p = "t") => Array.from({ length: n }, (_, i) => ({ id: p + i, a
 const CHECKS = {
   "S16": (v) => expect(v).toBe(12),
   "S17": (v) => expect(v).toBe("false／700／刪1筆=true"),
+  "S18": (v) => expect(v).toBe("false／1／true／101／new1=true／true"),
+  "S19": (v) => expect(v).toBe("false／警示=true"),
+  "S20": (v) => expect(v).toBe("false／100／警示還在=true"),
   "S1": (v) => expect(v).toMatch(/^627；有跳提醒/),
   "S2": (v) => expect(v).toMatch(/^6849；有跳提醒/),
   "S3": (v) => expect(v).toBe(0),
@@ -51,7 +54,7 @@ test("S1", async () => {
   render(<App />);
   await wait(READ_FAIL_WAIT);
   await clearFail();
-  out("S1 開財務帳本時帳本讀取失敗 → 雲端帳本剩幾筆(原627)", (await get("finance:transactions")).value.length + (alerts.length ? "；有跳提醒" : "；沒有任何提醒"));
+  out("S1 開財務帳本時帳本讀取失敗 → 雲端帳本剩幾筆(原627)", (await get("finance:transactions")).value.length + (!(await import("../src/storage")).getSaveStatus().ok ? "；有跳提醒" : "；沒有任何提醒"));
 });
 
 test("S2", async () => {
@@ -63,7 +66,7 @@ test("S2", async () => {
   render(<App />);
   await wait(READ_FAIL_WAIT + 800);
   await clearFail();
-  out("S2 開顧客頁時顧客資料讀取失敗 → 雲端顧客剩幾位(原6849)", (await get("customers:list")).value.length + (alerts.length ? "；有跳提醒" : "；沒有任何提醒"));
+  out("S2 開顧客頁時顧客資料讀取失敗 → 雲端顧客剩幾位(原6849)", (await get("customers:list")).value.length + (!(await import("../src/storage")).getSaveStatus().ok ? "；有跳提醒" : "；沒有任何提醒"));
 });
 
 test("S3", async () => {
@@ -152,7 +155,7 @@ test("S11", async () => {
   const ps = [];
   for (let i = 1; i <= 10; i++) { cur = cur.map((m) => (m.id === "m5" ? { ...m, stock: i } : m)); ps.push(A.saveKey("finance:materials", cur)); }
   const rs = await Promise.all(ps); const v = (await get("finance:materials")).value;
-  out("S11 同一台連續快速改 10 次庫存 → 最後庫存(應10)／全部成功／誤跳提醒數", v.find((m) => m.id === "m5").stock + "／" + rs.every(Boolean) + "／" + alerts.length);
+  out("S11 同一台連續快速改 10 次庫存 → 最後庫存(應10)／全部成功／誤跳提醒數", v.find((m) => m.id === "m5").stock + "／" + rs.every(Boolean) + "／" + (A.getSaveStatus().ok ? 0 : 1));
 });
 
 test("S12", async () => {
@@ -238,4 +241,41 @@ test("S16", async () => {
   await wait(READ_FAIL_WAIT);
   await clearFail();
   out("S16 開財務頁時員工名單(12人)讀取失敗 → 雲端員工剩幾位", (await get("finance:staff")).value.length);
+});
+
+// 2026-11-21：員工反應「記完帳，隔幾天帳不見」。讀取失敗時記的帳要能靠「重新嘗試」補存，
+// 而且補存時不能把雲端原有的帳當成被刪掉。
+test("S18", async () => {
+  await put("finance:transactions", recs(100));
+  await failRead("finance:transactions");
+  const A = await device();
+  let v = await A.loadKey("finance:transactions", []);
+  v = [{ id: "new1", amount: 500 }, ...v];
+  const first = await A.saveKey("finance:transactions", v);
+  const unsaved = A.getSaveStatus().unsaved.length;
+  await clearFail();
+  const ok = await A.retrySaves({ gap: 0 });
+  const ids = (await get("finance:transactions")).value.map((t) => t.id);
+  out("S18 讀取失敗時記一筆 → 先存失敗／待補存數／重試成功／雲端筆數(應101)／新帳在／警示消失",
+    first + "／" + unsaved + "／" + ok + "／" + ids.length + "／new1=" + ids.includes("new1") + "／" + A.getSaveStatus().ok);
+});
+
+// 以前存檔被資料庫安全網擋下時畫面完全沒提示，帳看起來在、其實沒存
+test("S19", async () => {
+  await put("finance:transactions", recs(700));
+  const A = await device(); const a = await A.loadKey("finance:transactions", []);
+  const bad = await A.saveKey("finance:transactions", [...recs(29, "old"), ...a.slice(66)]);
+  out("S19 存檔被安全網擋下 → 存檔回報／警示欄有出現", bad + "／警示=" + A.getSaveStatus().unsaved.includes("finance:transactions"));
+});
+
+test("S20", async () => {
+  await put("finance:transactions", recs(100));
+  await failRead("finance:transactions");
+  const A = await device();
+  const v = await A.loadKey("finance:transactions", []);
+  await A.saveKey("finance:transactions", [{ id: "x" }, ...v]);
+  const ok = await A.retrySaves({ gap: 0 });
+  await clearFail();
+  out("S20 重試 3 次都讀不到 → 重試回報／雲端筆數(不可變)／警示還在",
+    ok + "／" + (await get("finance:transactions")).value.length + "／警示還在=" + !A.getSaveStatus().ok);
 });
