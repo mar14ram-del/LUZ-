@@ -9,6 +9,8 @@ import {
   Search, UserPlus, User,
 } from "lucide-react";
 import { loadKey, saveKey } from "./storage";
+import { COUPON_KEY, availableCoupons, planDiscount, applyCoupon, rewardLabel } from "./coupons";
+import { loadGrants, markUsed, releaseForGroup } from "./coupon-store";
 import PayrollLock from "./payroll-lock";
 import { blankCustomer } from "./salon-customers";
 import { STORES, storeName, BRAND } from "./stores";
@@ -133,6 +135,8 @@ function groupTx(list) {
       id: t.id, category: t.category, amount: t.amount,
       materialId: t.materialId || "", qty: Number(t.qty) || 0,
       stockTracked: Object.prototype.hasOwnProperty.call(t, "materialId"),
+      couponId: t.couponId || "", couponGrantId: t.couponGrantId || "",
+      discount: Number(t.discount) || 0, originalAmount: t.originalAmount,
     });
     g.amount += t.amount;
   });
@@ -217,6 +221,13 @@ function buildTx(r, meta, groupId, id) {
     storeId: meta.storeId || "",
   };
   if (meta.type === "income" && meta.customerId) tx.customerId = meta.customerId;
+  // 用了優惠券的那一項：amount 是折後金額（業績照折後算），另外記下原價與折抵
+  if (meta.type === "income" && r.couponId) {
+    tx.couponId = r.couponId;
+    if (r.couponGrantId) tx.couponGrantId = r.couponGrantId;
+    tx.discount = Number(r.discount) || 0;
+    tx.originalAmount = Number(r.originalAmount) || 0;
+  }
   if (meta.type === "income" && r.category === "產品銷售" && !r.legacy) {
     tx.materialId = r.materialId || "";
     tx.qty = r.materialId ? (parseFloat(r.qty) || 0) : 0;
@@ -565,7 +576,7 @@ function CustomerPicker({ customers, dayAppts, staff, value, onChange, onPickApp
   );
 }
 
-function TxForm({ onAdd, staff, materials, defaultStoreId, incomeCats, priceChips, staffPlans, customers, appointments, onCreateCustomer }) {
+function TxForm({ onAdd, staff, materials, defaultStoreId, incomeCats, priceChips, staffPlans, coupons, allTx, customers, appointments, onCreateCustomer }) {
   const [type, setType] = useState("income");
   const [date, setDate] = useState(todayStr());
   const [storeId, setStoreId] = useState(defaultStoreId || STORES[0].id);
@@ -599,7 +610,27 @@ function TxForm({ onAdd, staff, materials, defaultStoreId, incomeCats, priceChip
     if (a.storeId && STORES.some((st) => st.id === a.storeId)) setStoreId(a.storeId);
   }
 
-  const total = rows.reduce((s, r) => s + (parseFloat(r.amount) || 0), 0);
+  // ---- 優惠券：選了客人就列出他能用的券；一筆帳最多一張 ----
+  const [grants, setGrants] = useState([]);
+  const [couponPick, setCouponPick] = useState(null);   // { coupon, grant }
+  const [couponMsg, setCouponMsg] = useState("");
+  useEffect(() => {
+    setCouponPick(null); setGrants([]);
+    if (!customerId || type !== "income") return;
+    let alive = true;
+    loadGrants(customerId).then((g) => { if (alive) setGrants(g); })
+      .catch((e) => { if (alive) setCouponMsg("券的紀錄讀取失敗：" + e.message); });
+    return () => { alive = false; };
+  }, [customerId, type]);
+  const customerObj = customerId ? (customers || []).find((c) => c.id === customerId) : null;
+  const usable = type === "income" && customerObj
+    ? availableCoupons({ coupons, grants, customer: customerObj, transactions: allTx, date })
+    : [];
+  const keyedRows = rows.map((r) => ({ ...r, key: r.id }));
+  const couponPlan = couponPick ? planDiscount(couponPick.coupon, keyedRows) : null;
+  const discountNow = couponPlan && couponPlan.ok ? couponPlan.discount : 0;
+
+  const total = rows.reduce((s, r) => s + (parseFloat(r.amount) || 0), 0) - discountNow;
 
   useEffect(() => {
     if (defaultStoreId) setStoreId(defaultStoreId);
@@ -607,18 +638,30 @@ function TxForm({ onAdd, staff, materials, defaultStoreId, incomeCats, priceChip
 
   function submit(e) {
     e.preventDefault();
-    const validRows = rows
+    if (couponPick && !(couponPlan && couponPlan.ok)) {
+      setError("優惠券「" + couponPick.coupon.name + "」不能用在這筆：" + (couponPlan ? couponPlan.reason : "") + "。請取消用券或調整品項。");
+      return;
+    }
+    const finalRows = couponPick ? applyCoupon(keyedRows, couponPick.coupon, couponPick.grant && couponPick.grant.id).rows : rows;
+    const validRows = finalRows
       .map((r) => ({ ...r, amount: parseFloat(r.amount) || 0, qty: parseFloat(r.qty) || 0 }))
       .filter((r) => r.amount > 0);
     if (validRows.length === 0) {
       setError("至少要選一個分類、填金額");
       return;
     }
-    onAdd(validRows, {
+    const groupId = onAdd(validRows, {
       type, date, note: note.trim(), paymentMethod: payment, storeId,
       staffId: type === "income" ? (staffId || null) : null,
       customerId: type === "income" ? customerId : "",
     });
+    if (couponPick && groupId) {
+      const name = couponPick.coupon.name;
+      markUsed({ couponId: couponPick.coupon.id, grantId: couponPick.grant && couponPick.grant.id, customerId, txGroupId: groupId })
+        .then(() => setCouponMsg("已用掉「" + name + "」"))
+        .catch((err) => setCouponMsg("帳已記好，但「" + name + "」的使用紀錄沒寫進去：" + err.message + "。請截圖給管理者。"));
+    }
+    setCouponPick(null);
     setRows([]);
     setNote("");
     setCustomerId("");
@@ -673,6 +716,31 @@ function TxForm({ onAdd, staff, materials, defaultStoreId, incomeCats, priceChip
           plan={plan} planOwner={(staff.find((s) => s.id === staffId) || {}).name || ""} onChange={setRows} />
       </div>
 
+      {type === "income" && customerObj && (usable.length > 0 || couponPick || couponMsg) && (
+        <div className="field-label">
+          可以用的優惠券（一筆最多一張，只折一項服務，產品不能用）
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+            {usable.map(({ coupon, grant }) => {
+              const on = couponPick && couponPick.coupon.id === coupon.id;
+              const p = planDiscount(coupon, keyedRows);
+              return (
+                <button key={coupon.id} type="button"
+                  className={"pricechip catchip" + (on ? " pricechip-on" : "")}
+                  style={{ fontSize: 15, padding: "10px 14px", textAlign: "left" }}
+                  onClick={() => { setCouponPick(on ? null : { coupon, grant }); setError(""); }}>
+                  {on ? "✓ " : ""}{coupon.name}
+                  <span style={{ display: "block", fontSize: 12, fontWeight: 400, opacity: 0.85 }}>
+                    {rewardLabel(coupon)}{p.ok ? "・這筆折 " + fmtMoney(p.discount) : "・" + p.reason}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+          {couponPick && couponPlan && !couponPlan.ok && <div style={{ color: WINE, fontSize: 13 }}>{couponPlan.reason}</div>}
+          {couponMsg && <div style={{ color: BRASS, fontSize: 13 }}>{couponMsg}</div>}
+        </div>
+      )}
+
       {type === "income" && staff.length > 0 && (
         <label className="field-label">
           服務員工（選填，用於計算抽成）
@@ -723,6 +791,8 @@ function GroupEditForm({ g, staff, materials, incomeCats, allTransactions, custo
     key: i.id, txId: i.id, category: i.category, amount: String(i.amount),
     materialId: i.materialId || "", qty: String(i.qty || 1),
     legacy: i.category === "產品銷售" && !i.stockTracked,
+    couponId: i.couponId || "", couponGrantId: i.couponGrantId || "",
+    discount: i.discount, originalAmount: i.originalAmount,
   })));
   const [error, setError] = useState("");
 
@@ -892,6 +962,11 @@ function GroupRow({ g, staff, customerMap, onDelete, onEdit, editCtx }) {
             {g.items.map((i) => i.category + " " + fmtMoney(i.amount)).join("　")}
           </div>
         )}
+        {g.items.some((i) => i.discount > 0) && (
+          <div style={{ fontSize: 11, color: BRASS, marginTop: 2 }}>
+            {g.items.filter((i) => i.discount > 0).map((i) => "用券：" + i.category + " 原價 " + fmtMoney(i.originalAmount) + "，折 " + fmtMoney(i.discount)).join("　")}
+          </div>
+        )}
         {g.note && <div style={{ fontSize: 12, color: MUTED, marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{g.note}</div>}
       </div>
       <div style={{ width: 62, fontSize: 11, color: MUTED, textAlign: "center" }}>{g.paymentMethod}</div>
@@ -998,7 +1073,7 @@ function DailyPerformance({ transactions, staff, materials, focus, onFocus }) {
   );
 }
 
-function LedgerView({ transactions, allTransactions, staff, materials, defaultStoreId, incomeCats, priceChips, staffPlans, customers, appointments, onCreateCustomer, onAdd, onDelete, onUpdate }) {
+function LedgerView({ transactions, allTransactions, staff, materials, defaultStoreId, incomeCats, priceChips, staffPlans, coupons, customers, appointments, onCreateCustomer, onAdd, onDelete, onUpdate }) {
   const customerMap = useMemo(() => new Map((customers || []).map((c) => [c.id, c])), [customers]);
   const [filterType, setFilterType] = useState("all");
   const [filterMonth, setFilterMonth] = useState(monthKey(todayStr()));
@@ -1030,6 +1105,7 @@ function LedgerView({ transactions, allTransactions, staff, materials, defaultSt
   return (
     <div style={{ display: "grid", gridTemplateColumns: "340px 1fr", gap: 20 }} className="responsive-grid">
       <TxForm onAdd={onAdd} staff={staff} materials={materials} defaultStoreId={defaultStoreId} incomeCats={incomeCats} priceChips={priceChips} staffPlans={staffPlans}
+        coupons={coupons} allTx={allTransactions}
         customers={customers} appointments={appointments} onCreateCustomer={onCreateCustomer} />
 
       <div style={{ display: "flex", flexDirection: "column", gap: 12, minWidth: 0 }}>
@@ -1881,6 +1957,8 @@ export default function FinanceApp() {
   const [appointments, setAppointments] = useState([]);
   // 排班設定只讀不寫（固定方案用），存檔在排班頁
   const [roster, setRoster] = useState(null);
+  // 優惠券種類只讀（設定在「優惠券」頁）
+  const [coupons, setCoupons] = useState([]);
 
   useEffect(() => {
     (async () => {
@@ -1891,6 +1969,7 @@ export default function FinanceApp() {
         loadKey(SERVICE_KEY, null), loadKey(CUSTOMER_KEY, null), loadKey(APPT_KEY, []),
       ]);
       loadKey("appointments:roster", null).then((r) => setRoster(r));
+      loadKey(COUPON_KEY, []).then((c) => setCoupons(Array.isArray(c) ? c : []));
       setTransactions(tx); setStaff(st); setClosings(cl);
       setAssistantItems(ai); setDesignerDeductions(dd); setTemplates(tpl); setMaterials(mat);
       setServices(normalizeServices(svc));
@@ -1925,6 +2004,7 @@ export default function FinanceApp() {
     const txs = rows.map((r) => buildTx(r, meta, groupId, uid()));
     setTransactions((prev) => [...txs, ...prev]);
     applyStockDelta(stockDelta([], txs));
+    return groupId;
   }, []);
 
   /** 整筆刪除：產品銷售扣掉的庫存加回去 */
@@ -1932,6 +2012,10 @@ export default function FinanceApp() {
     const gone = transactions.filter((t) => (t.groupId || t.id) === groupId);
     setTransactions((prev) => prev.filter((t) => (t.groupId || t.id) !== groupId));
     applyStockDelta(stockDelta(gone, []));
+    // 這筆用過券：手動發的券還給客人，自動條件的使用紀錄刪掉
+    if (gone.some((t) => t.couponId)) {
+      releaseForGroup(groupId).catch((e) => console.error("[coupon] 刪帳後還券失敗", e));
+    }
   }, [transactions]);
 
   /** 修改一整筆：用新的品項取代舊的；商品或數量有變才調整庫存，只改金額不動庫存 */
@@ -2113,7 +2197,7 @@ export default function FinanceApp() {
         </div>
 
         {tab === "dashboard" && <Dashboard transactions={visibleTx} allTransactions={transactions} staff={staff} storeFilter={storeFilter} />}
-        {tab === "ledger" && <LedgerView transactions={visibleTx} staff={staff} materials={materials} defaultStoreId={activeStoreId} incomeCats={incomeCats} priceChips={priceChips} staffPlans={staffPlans} onAdd={addTxGroup} onDelete={deleteTxGroup} onUpdate={updateTxGroup} allTransactions={transactions}
+        {tab === "ledger" && <LedgerView transactions={visibleTx} staff={staff} materials={materials} defaultStoreId={activeStoreId} incomeCats={incomeCats} priceChips={priceChips} staffPlans={staffPlans} coupons={coupons} onAdd={addTxGroup} onDelete={deleteTxGroup} onUpdate={updateTxGroup} allTransactions={transactions}
           customers={customers} appointments={appointments} onCreateCustomer={customersReady ? createCustomer : null} />}
         {tab === "materials" && <MaterialsView materials={materials} onAdd={addMaterial} onUpdate={updateMaterial} onDelete={deleteMaterial} />}
         {/* 薪資刻意用完整 transactions，不受分店篩選影響——設計師的抽成是兩店合併計算 */}

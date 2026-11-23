@@ -6,6 +6,7 @@ import CustomerApp from "./salon-customers";
 import AppointmentApp from "./salon-appointments";
 import PublicBookingPage from "./booking-public";
 import SaveStatusBanner from "./SaveStatusBanner";
+import PromoApp from "./promo";
 
 const PAPER = "#F6F1E6";
 const PAPER_LINE = "#E3D8BE";
@@ -16,6 +17,7 @@ const TABS = [
   { id: "finance", label: "財務" },
   { id: "customers", label: "顧客" },
   { id: "appointments", label: "預約" },
+  { id: "promo", label: "優惠券" },
 ];
 
 // 客人點「用 LINE 登入」後，LINE 會把人導回本站。
@@ -134,6 +136,7 @@ export default function App() {
       {tab === "finance" && <FinanceApp />}
       {tab === "customers" && <CustomerApp />}
       {tab === "appointments" && <AppointmentApp />}
+      {tab === "promo" && <PromoApp />}
     </div>
   );
 }

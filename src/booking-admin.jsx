@@ -136,7 +136,7 @@ export function usePendingRequestCount(intervalMs) {
 // =====================================================================
 // 預約申請收件匣
 // =====================================================================
-export function BookingInbox({ appointments, customers, staff, services, roster, onApprove, onCreateCustomer, onHandled }) {
+export function BookingInbox({ appointments, customers, staff, services, roster, onApprove, onCreateCustomer, onLinkLine, onHandled }) {
   const [requests, setRequests] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -231,6 +231,7 @@ export function BookingInbox({ appointments, customers, staff, services, roster,
         name: req.customer_name,
         phone: req.phone,
         lineId: req.line_id || "",
+        lineUserId: req.line_user_id || "",
         allergies: req.allergies || "",
         preferredStylistId: staffId,
         source: req.found_us_from || "其他",
@@ -243,6 +244,12 @@ export function BookingInbox({ appointments, customers, staff, services, roster,
       } else {
         customerId = "";
       }
+    }
+
+    // 客人用 LINE 登入預約的：把 LINE 帳號連到既有顧客（已經連過的不覆蓋）
+    if (customerId && req.line_user_id && onLinkLine) {
+      const cur = (customers || []).find((c) => c.id === customerId);
+      if (cur && !cur.lineUserId) onLinkLine(customerId, req.line_user_id);
     }
 
     const svcIds = Array.isArray(req.service_ids) ? req.service_ids : [];

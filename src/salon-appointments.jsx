@@ -1617,6 +1617,13 @@ export default function SalonAppointmentApp() {
                 await saveKey(CUSTOMER_KEY, next);
                 return fresh;
               }}
+              onLinkLine={(customerId, lineUserId) => {
+                setCustomers((prev) => {
+                  const next = prev.map((c) => (c.id === customerId && !c.lineUserId ? { ...c, lineUserId } : c));
+                  saveKey(CUSTOMER_KEY, next);
+                  return next;
+                });
+              }}
               onHandled={pending.refresh}
             />
           )}

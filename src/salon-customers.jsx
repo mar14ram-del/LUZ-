@@ -4,6 +4,8 @@ import {
   Users, Save, ChevronDown, Star,
 } from "lucide-react";
 import { ImportCustomersButton } from "./import-customers";
+import { COUPON_KEY, availableCoupons, rewardLabel } from "./coupons";
+import { loadGrants } from "./coupon-store";
 
 const FONT_IMPORT = `@import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap');`;
 
@@ -261,6 +263,61 @@ function PurchaseHistory({ txs, staff }) {
   );
 }
 
+/** 顧客頁：LINE 連結狀態、現在可以用的券、券的紀錄 */
+function CustomerCoupons({ customer, purchases }) {
+  const [coupons, setCoupons] = useState(null);
+  const [grants, setGrants] = useState([]);
+  const [err, setErr] = useState("");
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      const cp = await loadKey(COUPON_KEY, []);
+      let gs = [];
+      try { gs = await loadGrants(customer.id); } catch (e) { if (alive) setErr("券紀錄讀取失敗：" + e.message); }
+      if (alive) { setCoupons(Array.isArray(cp) ? cp : []); setGrants(gs); }
+    })();
+    return () => { alive = false; };
+  }, [customer.id]);
+  const today = todayStr();
+  const avail = coupons ? availableCoupons({ coupons, grants, customer, transactions: purchases, date: today }) : [];
+  const byId = {};
+  (coupons || []).forEach((c) => { byId[c.id] = c; });
+
+  return (
+    <div style={{ background: "#FFFDF8", border: "1px solid " + PAPER_LINE, borderRadius: 8, padding: "10px 12px", fontSize: 13 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+        {customer.lineUserId
+          ? <span className="tag-chip">已連結 LINE</span>
+          : <span style={{ color: MUTED }}>尚未連結 LINE（客人用 LINE 登入預約、你接受後會自動連結）</span>}
+      </div>
+      {err && <div style={{ color: WINE, marginTop: 6 }}>{err}</div>}
+      {coupons && (
+        <div style={{ marginTop: 8, lineHeight: 1.8 }}>
+          <b>現在可以用的券：</b>
+          {avail.length === 0 ? <span style={{ color: MUTED }}>沒有</span> : avail.map(({ coupon }) => (
+            <span key={coupon.id} className="tier-badge" style={{ marginLeft: 6 }}>{coupon.name}（{rewardLabel(coupon)}）</span>
+          ))}
+          {grants.length > 0 && (
+            <div style={{ marginTop: 6 }}>
+              <b>券的紀錄：</b>
+              {grants.map((g) => {
+                const c = byId[g.coupon_id];
+                const state = g.used_at ? "已用 " + String(g.used_at).slice(0, 10)
+                  : g.expires_on && g.expires_on < today ? "已過期" : "未使用" + (g.expires_on ? "，到 " + g.expires_on : "");
+                return (
+                  <div key={g.id} style={{ color: MUTED }}>
+                    {(c ? c.name : "（已刪除的券）")}・{g.source === "auto" ? "自動條件" : "發券 " + String(g.issued_at).slice(0, 10)}・{state}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function CustomerForm({ customer, staff, purchases, onSave, onCancel, onDelete, isNew }) {
   const [form, setForm] = useState(customer);
   useEffect(() => { setForm(customer); }, [customer.id]);
@@ -307,6 +364,8 @@ function CustomerForm({ customer, staff, purchases, onSave, onCancel, onDelete, 
         </div>
       )}
 
+      {!isNew && <CustomerCoupons customer={customer} purchases={purchases} />}
+
       <Section title="基本資料" defaultOpen>
         <div className="form-grid-2">
           <Field label="姓名"><input className="ledger-input" value={form.name} onChange={(e) => set("name", e.target.value)} required /></Field>
@@ -351,7 +410,6 @@ function CustomerForm({ customer, staff, purchases, onSave, onCancel, onDelete, 
           <Field label="上次到店日期"><input type="date" className="ledger-input" value={form.lastVisitDate} onChange={(e) => set("lastVisitDate", e.target.value)} /></Field>
           <Field label="儲值金 / 預付卡餘額 (NT$)"><input type="number" className="ledger-input" value={form.prepaidBalance} onChange={(e) => set("prepaidBalance", e.target.value)} /></Field>
           <Field label="會員等級"><select className="ledger-input" value={form.memberTier} onChange={(e) => set("memberTier", e.target.value)}>{TIER_OPTIONS.map((o) => <option key={o}>{o}</option>)}</select></Field>
-          <Field label="優惠券 / 折扣資格"><input className="ledger-input" value={form.coupons} onChange={(e) => set("coupons", e.target.value)} /></Field>
         </div>
         <Field label="常做的服務項目"><input className="ledger-input" placeholder="例如：剪髮、護髮" value={form.commonServices} onChange={(e) => set("commonServices", e.target.value)} /></Field>
       </Section>
