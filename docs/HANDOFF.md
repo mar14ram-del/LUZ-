@@ -206,3 +206,4 @@
   - 記帳：選了客人就出現「可以用的優惠券」按鈕，按下預覽折多少，存檔時才把那一項改成折後並寫使用紀錄。帳本列表會顯示「用券：原價、折多少」。
   - LINE：接受預約時把 `line_user_id` 存到顧客的 `lineUserId`（新客直接帶入；既有客只在還沒連過時寫入）。顧客頁顯示「已連結 LINE」、可用的券、券紀錄；拿掉舊的「優惠券／折扣資格」文字欄。發券與名單頁可傳 LINE（`notify-line`），送出前顯示人數，送不到會列名字。
   - 尚未驗證：老闆實走一次 LINE 登入預約→接受→顧客頁顯示已連結→發券收到 LINE→記帳用掉→顧客頁顯示已用。目前只有 1 位顧客有 line_user_id，要等客人用 LINE 預約後才會變多。
+- 2026-11-24：預約頁「我的預約」上方加「我的優惠券」。`my-bookings` 雲端函式 v3 新增 `coupons` 動作，經資料庫函式 `my_coupon_context(line_user_id)`（只給 service_role 執行）取得該 LINE 連到的顧客自己的券。**my-bookings 原始碼現在存在 repo 的 `supabase/functions/my-bookings/`**（之前只在 Supabase），裡面的 `coupons.js` 是 `src/coupons.js` 的複本，preflight 會檢查兩份一致；改規則後要重新部署這支函式。另：老闆自己的 LINE 已用 jsonb_set 連到顧客「Mar14raM」（更新前接受的預約都沒連）。尚未驗證：手機 LINE 實際打開我的預約看到券。

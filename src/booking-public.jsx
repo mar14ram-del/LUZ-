@@ -415,8 +415,16 @@ export default function PublicBookingPage() {
     }
   }
 
+  // 我的優惠券：null = 還沒讀過
+  const [myCoupons, setMyCoupons] = useState(null);
+  async function loadMyCoupons() {
+    const r = await callMyBookings({ action: "coupons" });
+    setMyCoupons(r.ok ? { linked: !!r.linked, list: r.coupons || [], error: "" } : { linked: false, list: [], error: r.error });
+  }
+
   async function loadMine() {
     if (!lineAccessToken()) return;
+    loadMyCoupons();
     setMine((m) => ({ ...m, loading: true, error: "" }));
     const r = await callMyBookings({ action: "list" });
     if (r.ok) setMine({ loading: false, error: "", list: r.bookings || [] });
@@ -1256,6 +1264,31 @@ export default function PublicBookingPage() {
         {mineFlash && (
           <div className="note-band" style={{ marginBottom: 12 }}>
             <AlertCircle size={15} style={{ flexShrink: 0, marginTop: 1 }} />{mineFlash}
+          </div>
+        )}
+
+        {form.lineUserId && myCoupons && (
+          <div className="card" style={{ marginBottom: 14 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, fontWeight: 600, fontSize: 15, marginBottom: 8 }}>
+              <Sparkles size={16} color={INDIGO} /> 我的優惠券
+            </div>
+            {myCoupons.error ? (
+              <div style={{ color: WINE, fontSize: 13 }}>{myCoupons.error}</div>
+            ) : !myCoupons.linked ? (
+              <div style={{ color: MUTED, fontSize: 13, lineHeight: 1.7 }}>
+                這個 LINE 還沒連到店裡的顧客資料。用 LINE 預約一次、店家確認後就會連上，之後的優惠券都會顯示在這裡。
+              </div>
+            ) : myCoupons.list.length === 0 ? (
+              <div style={{ color: MUTED, fontSize: 13 }}>目前沒有可以用的優惠券。</div>
+            ) : myCoupons.list.map((c, i) => (
+              <div key={i} style={{ borderTop: i ? "1px dashed " + PAPER_LINE : "none", padding: "9px 0" }}>
+                <div style={{ fontSize: 15, fontWeight: 600 }}>{c.name}</div>
+                <div style={{ fontSize: 13, color: INDIGO, marginTop: 2 }}>{c.reward}{c.limit ? "　" + c.limit : ""}</div>
+                <div style={{ fontSize: 12, color: MUTED, marginTop: 2 }}>
+                  {c.expiresOn ? "使用期限：" + c.expiresOn.replace(/-/g, "/") + " 前" : "沒有期限"}　·　結帳時告訴設計師就能使用
+                </div>
+              </div>
+            ))}
           </div>
         )}
 

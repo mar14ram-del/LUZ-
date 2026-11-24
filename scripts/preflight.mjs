@@ -38,6 +38,12 @@ if (process.argv.includes("--dist")) {
   }
 }
 
+// 雲端函式 my-bookings 用的是 src/coupons.js 的複本，兩份必須一樣（改規則忘了同步，客人看到的券就會跟後台不同）
+const cpA = "src/coupons.js", cpB = "supabase/functions/my-bookings/coupons.js";
+if (fs.existsSync(cpB) && fs.readFileSync(cpA, "utf8") !== fs.readFileSync(cpB, "utf8")) {
+  errors.push(cpB + " 跟 " + cpA + " 不一樣。改完規則請複製過去，並重新部署 my-bookings 雲端函式。");
+}
+
 if (errors.length) {
   console.error("部署前檢查沒過：\n" + errors.map((e) => "  ✗ " + e).join("\n"));
   process.exit(1);
