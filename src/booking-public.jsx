@@ -1143,6 +1143,24 @@ export default function PublicBookingPage() {
           <div className="bk-sub">{config.notice}</div>
         </div>
 
+        {loggedIn && myCoupons && myCoupons.list.length > 0 && (
+          <button className="entry-card" onClick={openMine}
+            style={{ background: "linear-gradient(135deg, #FFF6E0, #FDEBC8)", borderColor: "#E8C77A" }}>
+            <span className="entry-ico" style={{ background: "#C9962B", color: "#FFFFFF" }}>
+              <Sparkles size={22} strokeWidth={1.6} />
+            </span>
+            <span className="entry-text">
+              <span className="entry-t">您有 {myCoupons.list.length} 張優惠券可以用</span>
+              <span className="entry-s" style={{ color: "#8A6418" }}>
+                {myCoupons.list[0].name}：{myCoupons.list[0].reward}
+                {myCoupons.list[0].expiresOn ? "（" + myCoupons.list[0].expiresOn.slice(5).replace("-", "/") + " 前）" : ""}
+                {myCoupons.list.length > 1 ? "，還有其他 " + (myCoupons.list.length - 1) + " 張" : ""}
+              </span>
+            </span>
+            <span style={{ marginLeft: "auto" }}><ChevronRight size={18} color="#C9962B" /></span>
+          </button>
+        )}
+
         {loggedIn && mineCard}
 
         <button className="entry-card" onClick={() => chooseEntry("store")}>
