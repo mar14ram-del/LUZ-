@@ -207,3 +207,4 @@
   - LINE：接受預約時把 `line_user_id` 存到顧客的 `lineUserId`（新客直接帶入；既有客只在還沒連過時寫入）。顧客頁顯示「已連結 LINE」、可用的券、券紀錄；拿掉舊的「優惠券／折扣資格」文字欄。發券與名單頁可傳 LINE（`notify-line`），送出前顯示人數，送不到會列名字。
   - 尚未驗證：老闆實走一次 LINE 登入預約→接受→顧客頁顯示已連結→發券收到 LINE→記帳用掉→顧客頁顯示已用。目前只有 1 位顧客有 line_user_id，要等客人用 LINE 預約後才會變多。
 - 2026-11-24：預約頁「我的預約」上方加「我的優惠券」。`my-bookings` 雲端函式 v3 新增 `coupons` 動作，經資料庫函式 `my_coupon_context(line_user_id)`（只給 service_role 執行）取得該 LINE 連到的顧客自己的券。**my-bookings 原始碼現在存在 repo 的 `supabase/functions/my-bookings/`**（之前只在 Supabase），裡面的 `coupons.js` 是 `src/coupons.js` 的複本，preflight 會檢查兩份一致；改規則後要重新部署這支函式。另：老闆自己的 LINE 已用 jsonb_set 連到顧客「Mar14raM」（更新前接受的預約都沒連）。尚未驗證：手機 LINE 實際打開我的預約看到券。
+- 2026-11-25：**客人按「用 LINE 登入」後看到 LINE 的 400 Bad Request**（「This version of the LIFF SDK is no longer available… Update to LIFF SDK v2.31.1 or later」）。原因：`@line/liff` 鎖在 2.31.0，被 LINE 停用。已升到 2.32.0；`scripts/preflight.mjs` 會擋低於 2.31.1 的版本，測試 `tests/liff-version.test.js`。優惠券＋LINE 連動（11/24）前面的流程都卡在這一步，所以「尚未驗證」那幾項現在才能開始實走。

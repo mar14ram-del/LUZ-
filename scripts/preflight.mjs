@@ -44,6 +44,22 @@ if (fs.existsSync(cpB) && fs.readFileSync(cpA, "utf8") !== fs.readFileSync(cpB, 
   errors.push(cpB + " 跟 " + cpA + " 不一樣。改完規則請複製過去，並重新部署 my-bookings 雲端函式。");
 }
 
+// LINE 登入（LIFF SDK）太舊時，LINE 會在客人按「用 LINE 登入」後直接顯示 400 Bad Request
+// （2026-11-25 事故：2.31.0 被 LINE 停用，要求 2.31.1 以上）。看實際安裝/鎖定的版本，不是 package.json 的範圍。
+const LIFF_MIN = "2.31.1";
+function versionAtLeast(v, min) {
+  const a = String(v).split(".").map(Number), b = min.split(".").map(Number);
+  for (let i = 0; i < 3; i++) { if ((a[i] || 0) !== (b[i] || 0)) return (a[i] || 0) > (b[i] || 0); }
+  return true;
+}
+try {
+  const lock = JSON.parse(fs.readFileSync("package-lock.json", "utf8"));
+  const liffV = lock.packages?.["node_modules/@line/liff"]?.version;
+  if (!liffV || !versionAtLeast(liffV, LIFF_MIN)) {
+    errors.push(`LINE 登入套件 @line/liff 是 ${liffV || "未安裝"}，LINE 要求 ${LIFF_MIN} 以上，客人會登入失敗。請執行 npm install @line/liff@latest。`);
+  }
+} catch { errors.push("讀不到 package-lock.json，無法檢查 LINE 登入套件版本。"); }
+
 if (errors.length) {
   console.error("部署前檢查沒過：\n" + errors.map((e) => "  ✗ " + e).join("\n"));
   process.exit(1);
